@@ -1,0 +1,81 @@
+seed: 0
+device: cpu
+
+env:
+  name: HalfCheetah-v4
+  task: ""
+  library: gymnasium
+  max_episode_steps: 1000
+  num_workers: 1
+
+dynamics:
+  ensemble_dim: 7
+  topk: 5
+  hidden_dims: [200, 200, 200]
+  activation: silu
+  min_std: 0.04
+  max_std: 1.6
+  decays: [0.000025, 0.00005, 0.000075, 0.000075, 0.0001]
+
+algo:
+  expert_dataset: "halfcheetah-expert-v2"
+  transition_dataset: "halfcheetah-medium-replay-v2"
+  pretrained_model_path: ../../exp/dynamics/ensemble/halfcheetah-medium-replay-v2/model.p
+  num_expert_trajs: 10
+  transition_data_size: 1000000
+
+  reward_use_done: false
+  reward_state_only: false
+  reward_grad_penalty: 10.
+  reward_grad_target: 1.
+  reward_l2_penalty: 1.e-3
+  reward_rollout_batch_size: 64
+  reward_rollout_steps: 100
+  lr_reward: 3.e-4
+  update_reward_every: 1000
+  reward_train_steps: 1
+
+  lam: 1.
+  lam_target: 1.
+  tune_lam: true
+  lr_lam: 0.01
+  
+  rollout_batch_size: 5000
+  rollout_min_steps: 40
+  rollout_max_steps: 40
+  rollout_min_epoch: 50
+  rollout_max_epoch: 200
+  sample_model_every: 250
+  model_retain_epochs: 5
+
+  closed_form_terminal: false
+  hidden_dims: [256, 256, 256]
+  activation: "silu"
+  gamma: 0.99
+  polyak: 0.995
+  alpha: 1.
+  tune_alpha: true
+  batch_size: 256
+  real_ratio: 0.5
+  policy_train_steps: 1
+  lr_actor: 3.e-4
+  lr_critic: 3.e-4
+  grad_clip: 1000.
+
+  buffer_size: 1000000
+  max_eps_steps: 1000
+  epochs: 1000
+  steps_per_epoch: 1000
+  num_eval_eps: 1
+  eval_steps: 1000
+
+  save_path: ../../exp/il/omlirl/halfcheetah-medium-replay-v2
+  save_steps: 1
+
+logger:
+  backend: wandb
+  log_dir: ../../log
+  project_name: cleanil_omlirl_halfcheetah
+  group_name: null
+  exp_name: medium_replay
+  wandb_mode: online

@@ -1,0 +1,54 @@
+seed: 0
+device: cpu
+
+env:
+  name: HalfCheetah-v4
+  task: ""
+  library: gymnasium
+  max_episode_steps: 1000
+  num_workers: 1
+
+algo:
+  dataset: halfcheetah-expert-v2
+  transition_dataset: "halfcheetah-medium-replay-v2"
+  num_expert_trajs: 20
+  transition_data_size: 1000000
+  train_ratio: 0.9
+  
+  expert_ratio: 0.5
+  action_mask_noise: 0.1
+  td_penalty: 0.8
+  q_expert_target: 200.
+  q_target_penalty: 1.
+  grad_target: 100.
+  grad_penalty: 10.
+
+  hidden_dims: [256, 256, 256]
+  activation: "silu"
+  gamma: 0.99
+  polyak: 0.995
+  alpha: 0.1
+  tune_alpha: false
+  batch_size: 256
+  policy_train_steps: 1
+  lr_actor: 3.e-4
+  lr_critic: 3.e-4
+  grad_clip: 1000.
+
+  buffer_size: 1000000
+  max_eps_steps: 1000
+  epochs: 500
+  steps_per_epoch: 1000
+  num_eval_eps: 1
+  eval_steps: 1000
+
+  save_path: ../../exp/il/recoil/halfcheetah-medium-replay-v2
+  save_steps: 1
+
+logger:
+  backend: wandb
+  log_dir: ../../log
+  project_name: cleanil_recoil_halfcheetah
+  group_name: null
+  exp_name: medium_replay
+  wandb_mode: online

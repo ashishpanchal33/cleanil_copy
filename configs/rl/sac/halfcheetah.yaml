@@ -1,0 +1,42 @@
+seed: 0
+device: cpu
+
+env:
+  name: HalfCheetah-v4
+  task: ""
+  library: gymnasium
+  max_episode_steps: 1000
+  num_workers: 1
+
+algo:
+  hidden_dims: [256, 256, 256]
+  activation: "silu"
+  gamma: 0.99
+  polyak: 0.995
+  alpha: 1.
+  tune_alpha: true
+  batch_size: 256
+  policy_train_steps: 1
+  policy_update_every: 1
+  lr_actor: 3.e-4
+  lr_critic: 3.e-4
+  grad_clip: 1000.
+
+  buffer_size: 1000000
+  max_eps_steps: 1000
+  epochs: 1000
+  steps_per_epoch: 1000
+  update_after: 2000
+  num_eval_eps: 1
+  eval_steps: 1000
+
+  save_path: ../../exp/rl/sac/HalfCheetah-v4
+  save_steps: 1
+
+logger:
+  backend: wandb
+  log_dir: ../../log
+  project_name: cleanil_sac_halfcheetah
+  group_name: null
+  exp_name: sac
+  wandb_mode: online

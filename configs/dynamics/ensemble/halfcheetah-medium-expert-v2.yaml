@@ -1,0 +1,34 @@
+seed: 0
+device: cpu
+
+dynamics:
+  ensemble_dim: 7
+  topk: 5
+  hidden_dims: [200, 200, 200]
+  activation: silu
+  min_std: 0.04
+  max_std: 1.6
+  decays: [0.000025, 0.00005, 0.000075, 0.000075, 0.0001]
+
+algo:
+  expert_dataset: halfcheetah-expert-v2
+  transition_dataset: halfcheetah-medium-expert-v2
+  num_expert_trajs: 10
+  transition_data_size: 1000000
+  
+  pred_reward: true
+  bootstrap: true
+  lr_model: 3.e-4
+  grad_clip: 1000.
+  model_eval_ratio: 0.2
+  model_train_batch_size: 256
+  model_train_steps: 500
+  save_path: ../../exp/dynamics/ensemble/halfcheetah-medium-expert-v2
+
+logger:
+  backend: wandb
+  log_dir: ../../log
+  project_name: cleanil_ensemble_halfcheetah
+  group_name: null
+  exp_name: medium_expert
+  wandb_mode: online

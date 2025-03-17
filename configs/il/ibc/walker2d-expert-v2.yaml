@@ -1,0 +1,54 @@
+seed: 0
+device: cpu
+
+env:
+  name: Walker2d-v4
+  task: ""
+  library: gymnasium
+  max_episode_steps: 1000
+  num_workers: 1
+
+algo:
+  dataset: walker2d-expert-v2
+  num_expert_trajs: 20
+  train_ratio: 0.9
+
+  reward_loss_type: "nce"
+  max_reward: 100.
+  reward_use_done: false
+  reward_state_only: false
+  reward_grad_target: 1.
+  reward_grad_penalty: 10.
+  reward_l2_penalty: 0.
+  lr_reward: 3.e-4
+  update_reward_every: 1
+  reward_train_steps: 1
+  num_actor_samples: 1
+  num_rand_samples: 3
+
+  hidden_dims: [256, 256, 256]
+  activation: "silu"
+  alpha: 0.2
+  tune_alpha: true
+  batch_size: 256
+  policy_train_steps: 1
+  lr_actor: 3.e-4
+  grad_clip: 1000.
+
+  buffer_size: 1000000
+  max_eps_steps: 1000
+  epochs: 500
+  steps_per_epoch: 1000
+  num_eval_eps: 1
+  eval_steps: 1000
+
+  save_path: ../../exp/il/ibc/walker2d-expert-v2
+  save_steps: 1
+
+logger:
+  backend: wandb
+  log_dir: ../../log
+  project_name: cleanil_ibc_walker2d
+  group_name: null
+  exp_name: expert
+  wandb_mode: online
