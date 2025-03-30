@@ -8,12 +8,7 @@ import torch.distributions.transforms as torch_transform
 from cleanil.utils import get_activation
 from tensordict import TensorDict
 from tensordict.nn.probabilistic import interaction_type
-from torchrl.data.tensor_specs import BoundedContinuous
 from torchrl.modules import MLP
-# from torchrl.modules import MLP, ProbabilisticActor
-# from torchrl.modules.distributions import TanhNormal
-# from tensordict.nn.distributions import NormalParamExtractor
-# from tensordict.nn import InteractionType, TensorDictModule
 
 LOG_STD_MAX = np.log(3)
 LOG_STD_MIN = np.log(1e-3)
@@ -155,65 +150,3 @@ def compute_action_likelihood(
     if sample:
         act_pred = dist.rsample()
     return logp, act_pred
-
-# def make_tanh_normal_actor(
-#     observation_spec: BoundedContinuous, 
-#     action_spec: BoundedContinuous, 
-#     hidden_dims: list[int], 
-#     activation: str,
-# ):
-#     observation_dim = observation_spec.shape[-1]
-#     action_dim = action_spec.shape[-1]
-#     actor_kwargs = {
-#         "in_features": observation_dim,
-#         "out_features": 2 * action_dim,
-#         "num_cells": hidden_dims,
-#         "activation_class": get_activation(activation),
-#     }
-#     dist_kwargs = {
-#         "low": action_spec.space.low,
-#         "high": action_spec.space.high,
-#         "tanh_loc": False,
-#         "safe_tanh": True,
-#     }
-
-#     actor_net = MLP(**actor_kwargs)
-#     actor_extractor = NormalParamExtractor()
-#     actor_extractor.scale_mapping = TanhScaleMapping() # force new scale mapping
-#     loc_clipper = NormalLocClipper()
-#     actor_net = nn.Sequential(actor_net, actor_extractor, loc_clipper)
-#     actor_module = TensorDictModule(
-#         actor_net,
-#         in_keys=["observation"],
-#         out_keys=["loc", "scale"],
-#     )
-#     dist_class = TanhNormal
-#     actor = ProbabilisticActor(
-#         spec=action_spec,
-#         in_keys=["loc", "scale"],
-#         module=actor_module,
-#         distribution_class=dist_class,
-#         distribution_kwargs=dist_kwargs,
-#         default_interaction_type=InteractionType.RANDOM,
-#         return_log_prob=True,
-#     )
-#     return actor
-
-# def sample_actor(obs: torch.Tensor, actor: ProbabilisticActor):
-#     """Reparameterized sample actor and return log likelihood"""
-#     actor_input = TensorDict({"observation": obs})
-#     dist = actor.get_dist(actor_input)
-#     act = dist.rsample()
-#     logp = dist.log_prob(act).unsqueeze(-1)
-#     return act, logp
-
-# def compute_action_likelihood(obs: torch.Tensor, act: torch.Tensor, actor: ProbabilisticActor, sample: bool = True):
-#     """Compute action likelihood and return actor prediction"""
-#     actor_input = TensorDict({"observation": obs})
-#     dist = actor.get_dist(actor_input)
-#     logp = dist.log_prob(act).unsqueeze(-1)
-
-#     act_pred = None
-#     if sample:
-#         act_pred = dist.rsample()
-#     return logp, act_pred

@@ -9,14 +9,13 @@ import torch.nn as nn
 from optree import tree_map
 from cleanil.base_trainer import BaseTrainer, BaseTrainerConfig
 from cleanil.rl.critic import DoubleQNetwork, compute_q_target, update_critic_target
-from cleanil.rl.actor import sample_actor, compute_action_likelihood
+from cleanil.rl.actor import TanhNormalActor, sample_actor, compute_action_likelihood
 from cleanil.il.reward import compute_grad_penalty
 from cleanil.utils import freeze_model_parameters
 
 from tensordict import TensorDict
 from torchrl.envs import TransformedEnv
 from torchrl.data.replay_buffers import ReplayBuffer
-from torchrl.modules import ProbabilisticActor
 from torchrl.envs.utils import ExplorationType, set_exploration_type
 from torchrl.record.loggers import Logger
 
@@ -319,7 +318,7 @@ class Trainer(BaseTrainer):
     def __init__(
         self, 
         config: RECOILConfig,
-        actor: ProbabilisticActor,
+        actor: TanhNormalActor,
         critic: DoubleQNetwork,
         expert_buffer: ReplayBuffer,
         transition_buffer: ReplayBuffer,

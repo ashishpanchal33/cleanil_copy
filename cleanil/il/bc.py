@@ -5,13 +5,12 @@ from tqdm import tqdm
 import torch
 import torch.nn as nn
 from cleanil.base_trainer import BaseTrainer, BaseTrainerConfig
-from cleanil.rl.actor import compute_action_likelihood
+from cleanil.rl.actor import TanhNormalActor, compute_action_likelihood
 from cleanil.utils import compute_parameter_l2
 
 from tensordict import TensorDict
 from torchrl.envs import TransformedEnv
 from torchrl.data.replay_buffers import ReplayBuffer
-from torchrl.modules import ProbabilisticActor
 from torchrl.envs.utils import ExplorationType, set_exploration_type
 from torchrl.record.loggers import Logger
 
@@ -75,7 +74,7 @@ class Trainer(BaseTrainer):
     def __init__(
         self, 
         config: BCConfig,
-        actor: ProbabilisticActor,
+        actor: TanhNormalActor,
         expert_buffer: Optional[ReplayBuffer],
         eval_buffer: Optional[ReplayBuffer],
         obs_mean: torch.Tensor,
