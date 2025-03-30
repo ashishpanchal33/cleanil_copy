@@ -1,6 +1,9 @@
-# CleanIL (Clean Implementation of IL Algorithms)
+<div align="center">
+  <img width="300px" height="auto" src="assets/logo.png">
+</div>
 
-CleanIL is a deep imitation and inverse reinforcement library. Inspired by [CleanRL](https://github.com/vwxyzjn/cleanrl), we provide single-file implementations of SOTA algorithms. We use [TorchRL](https://github.com/pytorch/rl) for some utility functions like replay buffers without hurting code readability.
+# CleanIL (Clean Implementation of IL Algorithms)
+CleanIL is a deep imitation and inverse reinforcement learning library. Inspired by [CleanRL](https://github.com/vwxyzjn/cleanrl), we provide single-file implementations of SOTA algorithms. We use [TorchRL](https://github.com/pytorch/rl) for some utility functions like replay buffers without hurting code readability. Feel free to read the [release blog post](https://latentobservations.substack.com/p/introducing-cleanil-for-imitation).
 
 ## Getting started
 
@@ -33,11 +36,13 @@ Alternatively, you can download pretrained dynamics models from this [HuggingFac
 We have also implemented a set of RL algorithms under `cleanil/rl`. The training scripts are in `scripts/rl`. Although we have tested some of them to ensure the base RL solvers for the IL algorithms are performant, the tests were not comprehensive.
 
 ## Algorithms and benchmarks
-The implemented IL and IRL algorithms are listed in the following table. For some of the algorithms, we have implemented modern techniques and tricks such as gradient penalty that would deviate slightly from the ideal algorithms in the papers. For behavior cloning, we do not use any regularization by default.
+The implemented IL and IRL algorithms are listed in the following table. For some of the algorithms, we have implemented modern techniques and tricks such as gradient penalty that may deviate slightly from the ideal algorithms in the papers. For behavior cloning, we do not use any regularization by default.
 
 We use 20 expert trajectories for behavior cloning based methods and 10 for RL based methods. For algorithms that make use of an offline transition dataset (e.g., from [D4RL](https://github.com/Farama-Foundation/D4RL)), we choose the `medium-replay` dataset. This dataset is more challenging as it does not contain expert transitions and is much smaller in size (way less than 1M transitions).
 
-The numbers below are the inter-quartile means and standard deviations of normalized returns from the last 30 evaluation episodes of a single seed. We did not cherry pick seeds, all algorithms were run on seed 0. The Wandb run logs are linked under the scores.
+The numbers below are the inter-quartile means and standard deviations of normalized returns from the last 30 evaluation episodes of a single seed. We did not cherry pick seeds, all algorithms were run on seed 0. The Wandb run logs are linked under the scores. 
+
+We also documented some implementation tricks and observations. See this [blog post](https://ran-weii.github.io/2025/03/28/cleanil-implementation-tricks.html) for detail.
 
 | Paper | Algorithm | On/offline | Num expert traj. | Halfcheetah | Hopper | Walker2d |
 |-------|-----------|------------|------------------|-------------|--------|----------|
@@ -50,7 +55,7 @@ The numbers below are the inter-quartile means and standard deviations of normal
 | [A Bayesian Approach to Robust Inverse Reinforcement Learning](https://arxiv.org/abs/2309.08571) | [rmirl](cleanil/il/rmirl.py) | Off | 10 | [101.74 ± 2.84](https://wandb.ai/ranw/cleanil_rmirl_halfcheetah_benchmark?nw=nwuserranw) | [97.78 ± 0.21](https://wandb.ai/ranw/cleanil_rmirl_hopper_benchmark?nw=nwuserranw) | [92.51 ± 0.61](https://wandb.ai/ranw/cleanil_rmirl_walker2d_benchmark?nw=nwuserranw) |
 
 ## Known issues and limitations
-* Currently, all experiments are conducted on cpu from a MacBook Pro. Running RL with torch MPS is known to be slow (see [this issue](https://github.com/pytorch-labs/LeanRL/issues/16)). We do not have access to CUDA so did not test the code with CUDA.
+* Currently, all experiments are conducted on cpu from a MacBook Pro. Running RL with torch MPS is known to be slow (see [this issue](https://github.com/pytorch-labs/LeanRL/issues/16)). But we also do not have access to CUDA so did not test the code with CUDA.
 * [`torch.compile`](https://pytorch.org/tutorials/intermediate/torch_compile_tutorial.html) notably increased the speed of the algorithms, but optimal usage was not explored.
 
 ## Contributing and getting involved
