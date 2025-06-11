@@ -1,9 +1,10 @@
 import torch
 from cleanil.utils import (
-    load_yaml, 
+    parse_configs,
     set_seed, 
     get_device, 
     get_logger, 
+    write_json,
     LoggerConfig,
 )
 from cleanil.data import (
@@ -25,14 +26,20 @@ from cleanil.dynamics.ensemble_dynamics import (
     remove_reward_head,
 )
 from torchrl.data import LazyTensorStorage, ReplayBuffer
-from torchrl.data import SliceSampler, SamplerWithoutReplacement
+from torchrl.data import SamplerWithoutReplacement
 from torchrl.envs.transforms import ObservationNorm
 
 def main():
-    config = load_yaml()
+    config = parse_configs(
+        EnvConfig(), 
+        rmirl.RMIRLConfig(),
+        LoggerConfig(),
+        EnsembleConfig(),
+    )
     env_config = EnvConfig(**config["env"])
     algo_config = rmirl.RMIRLConfig(**config["algo"])
     dynamics_config = EnsembleConfig(**config["dynamics"])
+    write_json(config, f"{algo_config.save_path}/config.json")
 
     set_seed(config["seed"])
     device = get_device(config["device"])
@@ -153,8 +160,10 @@ def main():
     )
     transition_buffer.extend(data)
     expert_buffer = ReplayBuffer(
-        storage=LazyTensorStorage(len(expert_data), device=device),
-        sampler=SliceSampler(num_slices=algo_config.num_expert_trajs)
+        storage=LazyTensorStorage(
+            len(expert_data), 
+            device=device,
+        )
     )
     expert_buffer.extend(expert_data)
 

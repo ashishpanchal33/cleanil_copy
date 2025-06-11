@@ -1,6 +1,6 @@
 import torch
 from cleanil.utils import (
-    load_yaml, 
+    parse_configs,
     set_seed, 
     get_device, 
     get_logger, 
@@ -20,11 +20,16 @@ from cleanil.rl.actor import make_tanh_normal_actor
 from cleanil.rl.critic import DoubleQNetwork
 from cleanil.dynamics.ensemble_dynamics import EnsembleDynamics, EnsembleConfig, remove_reward_head
 from torchrl.data import LazyTensorStorage, ReplayBuffer
-from torchrl.data import SliceSampler, SamplerWithoutReplacement
+from torchrl.data import SamplerWithoutReplacement
 from torchrl.envs.transforms import ObservationNorm
 
 def main():
-    config = load_yaml()
+    config = parse_configs(
+        EnvConfig(), 
+        omlirl.OMLIRLConfig(),
+        LoggerConfig(),
+        EnsembleConfig(),
+    )
     env_config = EnvConfig(**config["env"])
     algo_config = omlirl.OMLIRLConfig(**config["algo"])
     dynamics_config = EnsembleConfig(**config["dynamics"])
@@ -66,6 +71,12 @@ def main():
     data["next"]["observation"] = normalize(data["next"]["observation"], obs_mean, obs_std**2)
     expert_data["observation"] = normalize(expert_data["observation"], obs_mean, obs_std**2)
     expert_data["next"]["observation"] = normalize(expert_data["next"]["observation"], obs_mean, obs_std**2)
+
+    # add zero ensemble penalty
+    expert_data["ensemble_pen"] = torch.zeros_like(expert_data["terminated"])
+    expert_data["next"]["ensemble_pen"] = torch.zeros_like(expert_data["terminated"])
+    data["ensemble_pen"] = torch.zeros_like(data["terminated"])
+    data["next"]["ensemble_pen"] = torch.zeros_like(data["terminated"])
 
     # setup environments
     _, eval_env = make_environment(env_config, device)
@@ -146,8 +157,10 @@ def main():
     )
     transition_buffer.extend(data)
     expert_buffer = ReplayBuffer(
-        storage=LazyTensorStorage(len(expert_data), device=device),
-        sampler=SliceSampler(num_slices=algo_config.num_expert_trajs)
+        storage=LazyTensorStorage(
+            len(expert_data), 
+            device=device,
+        )
     )
     expert_buffer.extend(expert_data)
 

@@ -40,9 +40,12 @@ class RewardModel(nn.Module):
             rwd_inputs = torch.cat([rwd_inputs * (1 - done), done], dim=-1)
         return rwd_inputs
     
-    def forward(self, obs: torch.Tensor, act: torch.Tensor, done: torch.Tensor) -> torch.Tensor:
+    def forward(self, obs: torch.Tensor, act: torch.Tensor, done: torch.Tensor, clip: bool = True) -> torch.Tensor:
         rwd_inputs = self.compute_inputs(obs, act, done)
-        return self.mlp.forward(rwd_inputs).clip(-self.max_reward, self.max_reward)
+        rwd = self.mlp.forward(rwd_inputs)
+        if clip:
+            rwd = rwd.clip(-self.max_reward, self.max_reward)
+        return rwd
     
     def forward_on_inputs(self, rwd_inputs: torch.Tensor) -> torch.Tensor:
         """Save input processing"""

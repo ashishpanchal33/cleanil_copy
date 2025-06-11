@@ -45,18 +45,17 @@ class RMIRLConfig(BaseTrainerConfig):
     reward_state_only: bool = False
     reward_use_done: bool = False
     reward_grad_target: float = 1.
-    reward_grad_penalty: float = 1.
+    reward_grad_penalty: float = 10.
     reward_l2_penalty: float = 1.e-5
-    reward_rollout_batch_size: int = 64
-    reward_rollout_steps: int = 100
+    reward_batch_size: int = 256
     lr_reward: float = 3e-4
-    update_reward_every: int = 1000
+    update_reward_every: int = 10
     reward_train_steps: int = 1
 
     # model train args
     model_eval_ratio: float = 0.2
     obs_penalty: float = 1.
-    adv_penalty: float = 0.1
+    adv_penalty: float = 0.05
     adv_rollout_steps: int = 40
     adv_clip_max: float = 10.
     norm_advantage: bool = True
@@ -66,6 +65,7 @@ class RMIRLConfig(BaseTrainerConfig):
     update_model_every: int = 1000
 
     # rollout args
+    rollout_expert_ratio: float = 0.5
     rollout_batch_size: int = 5000
     rollout_min_steps: int = 40
     rollout_max_steps: int = 40
@@ -76,12 +76,13 @@ class RMIRLConfig(BaseTrainerConfig):
     model_retain_epochs: int = 5
 
     # rl args
+    q_max: float = 1000.
     closed_form_terminal: bool = False
     hidden_dims: list = (256, 256)
     activation: str = "silu"
     gamma: float = 0.99
     polyak: float = 0.995
-    alpha: float = 1.
+    alpha: float = 0.1
     tune_alpha: float = True
     batch_size: int = 256
     real_ratio: float = 0.5
@@ -106,6 +107,7 @@ def compute_critic_loss(
     actor: nn.Module, 
     gamma: float, 
     alpha: float | torch.Tensor,
+    q_max: float,
     closed_form_terminal: bool,
 ) -> torch.Tensor:
     obs = batch["observation"]
@@ -118,7 +120,7 @@ def compute_critic_loss(
         # compute value target
         next_act, logp = sample_actor(next_obs, actor)
         q1_next, q2_next = critic_target(next_obs, next_act)
-        q_next = torch.min(q1_next, q2_next)
+        q_next = torch.min(q1_next, q2_next).clip(-q_max, q_max)
         v_next = q_next - alpha * logp
         q_target = compute_q_target(
             rwd, v_next, done, gamma, 
@@ -126,8 +128,10 @@ def compute_critic_loss(
         )
 
     q1, q2 = critic(obs, act)
-    q1_loss = nn.SmoothL1Loss()(q1, q_target)
-    q2_loss = nn.SmoothL1Loss()(q2, q_target)
+    q1 = q1.clip(-q_max, q_max)
+    q2 = q2.clip(-q_max, q_max)
+    q1_loss = torch.pow(q1 - q_target, 2).mean()
+    q2_loss = torch.pow(q2 - q_target, 2).mean()
     q_loss = (q1_loss + q2_loss) / 2
 
     stats = {"critic_loss": q_loss.detach().cpu().numpy()}
@@ -141,13 +145,14 @@ def update_critic(
     actor: nn.Module, 
     gamma: float, 
     alpha: float | torch.Tensor,
+    q_max: float,
     closed_form_terminal: bool,
     optimizer: torch.optim.Optimizer,
     grad_clip: float | None = None,
 ):
     optimizer.zero_grad()
     loss, stats = compute_critic_loss(
-        batch, critic, critic_target, actor, gamma, alpha, closed_form_terminal
+        batch, critic, critic_target, actor, gamma, alpha, q_max, closed_form_terminal,
     )
     loss.backward()
     if grad_clip is not None:
@@ -217,6 +222,31 @@ def update_actor(
         actor_stats.update(alpha_stats)
     return actor_stats
 
+def sample_buffer(
+    expert_buffer: ReplayBuffer, 
+    transition_buffer: ReplayBuffer, 
+    batch_size: int, 
+    rollout_expert_ratio: float,
+):
+    batch_size_expert = int(batch_size * rollout_expert_ratio)
+    batch_size_transition = batch_size - batch_size_expert
+
+    obs_expert = expert_buffer.sample(batch_size_expert)
+    obs_transition = transition_buffer.sample(batch_size_transition)
+    obs = torch.cat([obs_expert, obs_transition], dim=0)
+    
+    device = obs["observation"].device
+    delta_dim = obs["observation"].shape[-1]
+    obs = TensorDict(
+        {
+            "observation": obs["observation"],
+            "delta": torch.zeros(batch_size, delta_dim, dtype=torch.float32, device=device),
+            "terminated": obs["terminated"],
+        },
+        batch_size=batch_size,
+    )
+    return obs
+
 @torch.no_grad()
 def step_dynamics(
     dynamics: EnsembleDynamics,
@@ -243,6 +273,7 @@ def compute_dynamics_adversarial_loss(
     step_dict: TensorDict,
     gamma: float, 
     alpha: float | torch.Tensor,
+    q_max: float,
     norm_advantage: bool,
     adv_clip_max: float,
 ):
@@ -257,13 +288,13 @@ def compute_dynamics_adversarial_loss(
     # compute advantage
     with torch.no_grad():
         q_1, q_2 = critic(obs, act)
-        q = torch.min(q_1, q_2)
+        q = torch.min(q_1, q_2).clip(-q_max, q_max)
 
         # compute next value
         next_act, logp = sample_actor(next_obs, actor)
         q_next_1, q_next_2 = critic(next_obs, next_act)
-        q_next = torch.min(q_next_1, q_next_2)
-        v_next = q_next # - alpha * logp
+        q_next = torch.min(q_next_1, q_next_2).clip(-q_max, q_max)
+        v_next = q_next - alpha * logp
         advantage = rwd + (1 - done) * gamma * v_next - q.data
         
         if norm_advantage:
@@ -289,7 +320,6 @@ def compute_reward_loss(
     real_batch: TensorDict,
     fake_batch: TensorDict,
     reward: RewardModel,
-    gamma: float,
     grad_target: float,
     grad_penalty: float,
     l2_penalty: float,
@@ -304,15 +334,10 @@ def compute_reward_loss(
     real_rwd = reward.forward_on_inputs(real_rwd_inputs)
     fake_rwd = reward.forward_on_inputs(fake_rwd_inputs)
     
-    seq_len = real_rwd_inputs.shape[1]
-    gamma_seq = gamma ** torch.arange(seq_len).view(1, -1, 1)
-    real_return = torch.sum(gamma_seq * real_rwd, dim=1) / seq_len
-    fake_return = torch.sum(gamma_seq * fake_rwd, dim=1) / seq_len
-
-    reward_loss = -(real_return.mean() - fake_return.mean())
+    reward_loss = -(real_rwd.mean() - fake_rwd.mean())
     gp, g_norm = compute_grad_penalty(
-        real_rwd_inputs.flatten(0, 1), 
-        fake_rwd_inputs.flatten(0, 1), 
+        real_rwd_inputs, 
+        fake_rwd_inputs, 
         reward.forward_on_inputs, 
         grad_target,
         penalty_type="margin",
@@ -338,7 +363,6 @@ def update_reward(
     real_batch: TensorDict,
     fake_batch: TensorDict,
     reward: RewardModel,
-    gamma: float,
     grad_target: float,
     grad_penalty: float,
     l2_penalty: float,
@@ -350,7 +374,6 @@ def update_reward(
         real_batch,
         fake_batch,
         reward,
-        gamma,
         grad_target,
         grad_penalty,
         l2_penalty,
@@ -366,6 +389,7 @@ class Trainer(BaseTrainer):
     """Robust model based inverse reinforcement learning
 
     Using RAMBO as the RL solver [2].
+    We replace the trajectory reward loss from [1] with the standard reward loss from replay buffer in GAIL style implementations.
 
     [1] A Bayesian Approach to Robust Inverse Reinforcement Learning, Wei et al, 2023 (https://arxiv.org/abs/2309.08571)
     [2] RAMBO-RL: Robust Adversarial Model-Based Offline Reinforcement Learning, Rigter et al, 2022 (https://arxiv.org/abs/2204.12581)
@@ -396,6 +420,12 @@ class Trainer(BaseTrainer):
 
         self.reward = reward
         self.dynamics = dynamics
+
+        # init critic
+        critic.q1[-1].weight.data *= 0.
+        critic.q1[-1].bias.data *= 0.
+        critic.q2[-1].weight.data *= 0.
+        critic.q2[-1].bias.data *= 0.
 
         self.actor = actor
         self.critic = critic
@@ -440,6 +470,7 @@ class Trainer(BaseTrainer):
         alpha = self.alpha
         tune_alpha = self.config.tune_alpha
         closed_form_terminal = self.config.closed_form_terminal
+        q_max = self.config.q_max
         grad_clip = self.config.grad_clip
 
         # replace data with learned reward
@@ -455,6 +486,7 @@ class Trainer(BaseTrainer):
             self.actor,
             gamma,
             alpha,
+            q_max,
             closed_form_terminal,
             self.optimizers["critic"],
             grad_clip,
@@ -508,7 +540,6 @@ class Trainer(BaseTrainer):
         return policy_stats_epoch
     
     def take_reward_gradient_step(self, real_batch: TensorDict, fake_batch: TensorDict, global_step: int):
-        gamma = self.config.gamma
         grad_target = self.config.reward_grad_target
         grad_penalty = self.config.reward_grad_penalty
         l2_penalty = self.config.reward_l2_penalty
@@ -518,7 +549,6 @@ class Trainer(BaseTrainer):
             real_batch,
             fake_batch,
             self.reward,
-            gamma,
             grad_target,
             grad_penalty,
             l2_penalty,
@@ -533,20 +563,12 @@ class Trainer(BaseTrainer):
     
     def train_reward_epoch(self, global_step: int):
         train_steps = self.config.reward_train_steps
-        batch_size = self.config.reward_rollout_batch_size
-        traj_len = self.config.reward_rollout_steps
+        batch_size = self.config.reward_batch_size
 
         reward_stats_epoch = []
         for _ in range(train_steps):
-            real_batch = self.expert_buffer.sample(batch_size * traj_len).reshape(-1, traj_len)
-            fake_batch = self.sample_imagined_data(
-                batch_size, 
-                traj_len, 
-                obs=real_batch["observation"][:, 0], 
-                terminated_early=False,
-                save_to_buffer=False,
-                return_data=True,
-            )
+            real_batch = self.expert_buffer.sample(batch_size)
+            fake_batch = self.replay_buffer.sample(batch_size)
             reward_stats = self.take_reward_gradient_step(real_batch, fake_batch, global_step)
             reward_stats_epoch.append(reward_stats)
 
@@ -557,6 +579,7 @@ class Trainer(BaseTrainer):
         self, obs: TensorDict, sl_inputs: torch.Tensor, sl_targets: torch.Tensor, global_step: int
     ):
         gamma = self.config.gamma
+        q_max = self.config.q_max
         norm_advantage = self.config.norm_advantage
         adv_clip_max = self.config.adv_clip_max
         obs_penalty = self.config.obs_penalty
@@ -572,6 +595,7 @@ class Trainer(BaseTrainer):
             obs,
             gamma, 
             self.alpha,
+            q_max,
             norm_advantage,
             adv_clip_max,
         )
@@ -610,29 +634,17 @@ class Trainer(BaseTrainer):
         ensemble_dim = self.dynamics.ensemble_dim 
         idx_train = get_random_index(len(train_inputs), ensemble_dim, bootstrap=True)
 
-        def sample_buffer(batch_size: int):
-            """Utility function for resampling along rollout trajectory"""
-            obs = self.transition_buffer.sample(batch_size).clone()
-            device = obs["observation"].device
-            delta_dim = obs["observation"].shape[-1]
-            obs = TensorDict(
-                {
-                    "observation": obs["observation"],
-                    "delta": torch.zeros(batch_size, delta_dim, dtype=torch.float32, device=device),
-                    "terminated": obs["terminated"],
-                },
-                batch_size=batch_size,
-            )
-            return obs
-
+        rollout_expert_ratio = self.config.rollout_expert_ratio
         dynamics_stats_epoch = []
         counter = 0
         idx_start_sl = 0
         while counter < train_steps:
-            obs = sample_buffer(batch_size)
+            obs = sample_buffer(
+                self.expert_buffer, self.transition_buffer, batch_size, rollout_expert_ratio
+            )
             for t in range(adv_rollout_steps):
                 # step dynamics
-                with set_exploration_type(ExplorationType.DETERMINISTIC), torch.no_grad():
+                with torch.no_grad():
                     obs = self.actor(obs)
                     obs["reward"] = self.reward.forward(
                         obs["observation"], obs["action"], obs["terminated"].float()
@@ -652,7 +664,9 @@ class Trainer(BaseTrainer):
 
                 # add new initital states
                 obs = obs[torch.all(obs["observation"].abs() < rollout_max_obs, dim=-1)]
-                obs_init = sample_buffer(batch_size - len(obs))
+                obs_init = sample_buffer(
+                    self.expert_buffer, self.transition_buffer, batch_size - len(obs), rollout_expert_ratio
+                )
                 obs = torch.cat([obs, obs_init], dim=0)
                 
                 counter += 1
@@ -693,10 +707,13 @@ class Trainer(BaseTrainer):
         save_to_buffer: bool = True,
         return_data: bool = False,
     ):
+        rollout_expert_ratio = self.config.rollout_expert_ratio
         rollout_max_obs = self.config.rollout_max_obs
 
         if obs is None:
-            obs = self.transition_buffer.sample(rollout_batch_size)["observation"]
+            obs = sample_buffer(
+                self.expert_buffer, self.transition_buffer, rollout_batch_size, rollout_expert_ratio
+            )["observation"]
         
         obs = TensorDict(
             {
@@ -759,6 +776,8 @@ class Trainer(BaseTrainer):
         steps_per_epoch = config.steps_per_epoch
         rollout_batch_size = self.config.rollout_batch_size
         sample_model_every = config.sample_model_every
+        update_model_every = config.update_model_every
+        model_train_steps = config.model_train_steps
         update_reward_every = config.update_reward_every
         max_eps_steps = config.max_eps_steps
         num_eval_eps = config.num_eval_eps
@@ -781,9 +800,12 @@ class Trainer(BaseTrainer):
             # train policy
             policy_stats_epoch = self.train_policy_epoch(t)
 
-            # train reward and model
-            if (t + 1) % update_reward_every == 0:
+            # train model
+            if (t + 1) % update_model_every == 0 and model_train_steps > 0:
                 dynamics_stats_epoch = self.train_dynamics_epoch(t)
+            
+            # train reward
+            if (t + 1) % update_reward_every == 0:
                 reward_stats_epoch = self.train_reward_epoch(t)
 
             # end of epoch handeling

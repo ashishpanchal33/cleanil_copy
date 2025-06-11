@@ -1,16 +1,19 @@
 import argparse
+import sys
 import os
 import yaml
+import json
 import random
 import numpy as np
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-from dataclasses import dataclass
+from dataclasses import dataclass, is_dataclass, asdict
 from typing import Union
 from torchrl.record.loggers import get_logger as get_logger_torchrl
 from torchrl.record.loggers import Logger
 from tensordict import TensorDict
+from typing import Optional
 
 @dataclass
 class LoggerConfig:
@@ -22,7 +25,7 @@ class LoggerConfig:
     wandb_mode: str = "online"
 
 
-def load_yaml(from_command_line: bool = True, config_path: str = "") -> dict:
+def load_yaml(config_path: str = "", from_command_line: bool = True) -> dict:
     if from_command_line:
         parser = argparse.ArgumentParser()
         parser.add_argument("--config_path", type=str, default="")
@@ -34,6 +37,79 @@ def load_yaml(from_command_line: bool = True, config_path: str = "") -> dict:
         config = yaml.safe_load(f)
     return config
 
+def parse_configs(
+    env_config: dataclass, 
+    algo_config: dataclass, 
+    logger_config: dataclass, 
+    dynamics_config: Optional[dataclass] = None,
+) -> dict:
+    """Read yaml config file and let command line overwrite"""
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--config_path", type=str, default="")
+    parser.add_argument("--seed", type=int, default=0)
+    parser.add_argument("--device", type=str, choices=["cpu", "mps", "cuda"], default=0)
+
+    _bool = lambda x: x if isinstance(x, bool) else x.lower() == "true"
+    _list = lambda x: [float(i.replace(" ", "")) for i in x.split(",")]
+    def get_type(v):
+        if isinstance(v, tuple) or isinstance(v, list):
+            return _list
+        elif isinstance(v, bool):
+            return _bool
+        else:
+            return type(v)
+    
+    # add args
+    for k, v in asdict(env_config).items():
+        parser.add_argument(f"--env/{k}", type=get_type(v), default=v)
+    for k, v in asdict(algo_config).items():
+        parser.add_argument(f"--algo/{k}", type=get_type(v), default=v)
+    for k, v in asdict(logger_config).items():
+        parser.add_argument(f"--logger/{k}", type=get_type(v), default=v)
+    if dynamics_config is not None:
+        for k, v in asdict(dynamics_config).items():
+            parser.add_argument(f"--dynamics/{k}", type=get_type(v), default=v)
+
+    # parse only entered args
+    args = {}
+    args["env"] = {}
+    args["algo"] = {}
+    args["logger"] = {}
+    if dynamics_config is not None:
+        args["dynamics"] = {}
+    for arg_name, arg_value in vars(parser.parse_args()).items():
+        if arg_value is not None and f"--{arg_name}" in sys.argv:
+            if arg_name.startswith("env/"):
+                args["env"][arg_name.replace("env/", "")] = arg_value
+            elif arg_name.startswith("algo/"):
+                args["algo"][arg_name.replace("algo/", "")] = arg_value
+            elif arg_name.startswith("logger/"):
+                args["logger"][arg_name.replace("logger/", "")] = arg_value
+            elif arg_name.startswith("dynamics/"):
+                args["dynamics"][arg_name.replace("dynamics/", "")] = arg_value
+            else:
+                args[arg_name] = arg_value
+
+    config = load_yaml(config_path=args["config_path"], from_command_line=False)
+
+    # overwrite config
+    config["seed"] = args["seed"] if "seed" in args else config["seed"]
+    config["device"] = args["device"] if "device" in args else config["device"]
+    for k, v in args["env"].items():
+        print(f"update env_config {k}: {v}")
+        config["env"][k] = v
+    for k, v in args["algo"].items():
+        print(f"update algo_config {k}: {v}")
+        config["algo"][k] = v
+    for k, v in args["logger"].items():
+        print(f"update logger_config {k}: {v}")
+        config["logger"][k] = v
+    if dynamics_config is not None:
+        for k, v in args["dynamics"].items():
+            print(f"update dynamics_config {k}: {v}")
+            config["algo"][k] = v
+    return config
+
 def set_seed(seed: int):
     random.seed(seed)
     np.random.seed(seed)
@@ -42,6 +118,11 @@ def set_seed(seed: int):
 def make_dir(path: str):
     if path != "" and not os.path.exists(path):
         os.makedirs(path)
+
+def write_json(file: dataclass, path: str):
+    _file = asdict(file) if is_dataclass(file) else file
+    with open(path, "w") as f:
+        json.dump(_file, f)
 
 def get_device(device: str):
     if device == "cuda":
@@ -86,6 +167,16 @@ def print_grads(model: torch.nn.Module):
             print(n, None)
         else:
             print(n, p.grad.data.norm())
+
+def count_params(model: torch.nn.Module):
+    if not isinstance(model, torch.nn.Module):
+        return 0
+    
+    count = 0
+    for n, p in model.named_parameters():
+        if p.requires_grad:
+            count += np.prod(p.shape)
+    return count
 
 def remove_keys_from_tensordict(td: TensorDict, keys_to_remove: list[str]) -> TensorDict:
     """

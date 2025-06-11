@@ -41,12 +41,11 @@ class OMLIRLConfig(BaseTrainerConfig):
     reward_state_only: bool = False
     reward_use_done: bool = False
     reward_grad_target: float = 1.
-    reward_grad_penalty: float = 1.
+    reward_grad_penalty: float = 10.
     reward_l2_penalty: float = 1.e-5
-    reward_rollout_batch_size: int = 64
-    reward_rollout_steps: int = 100
+    reward_batch_size: int = 256
     lr_reward: float = 3.e-4
-    update_reward_every: int = 1000
+    update_reward_every: int = 10
     reward_train_steps: int = 1
 
     # model args
@@ -56,6 +55,7 @@ class OMLIRLConfig(BaseTrainerConfig):
     lr_lam: float = 0.01
 
     # rollout args
+    rollout_expert_ratio: float = 0.5
     rollout_batch_size: int = 5000
     rollout_min_steps: int = 40
     rollout_max_steps: int = 40
@@ -66,12 +66,13 @@ class OMLIRLConfig(BaseTrainerConfig):
     model_retain_epochs: int = 5
 
     # rl args
+    q_max: float = 1000.
     closed_form_terminal: bool = False
     hidden_dims: list = (256, 256)
     activation: str = "silu"
     gamma: float = 0.99
     polyak: float = 0.995
-    alpha: float = 0.2
+    alpha: float = 0.1
     tune_alpha: float = True
     batch_size: int = 256
     real_ratio: float = 0.5
@@ -96,6 +97,7 @@ def compute_critic_loss(
     actor: nn.Module, 
     gamma: float, 
     alpha: float | torch.Tensor,
+    q_max: float,
     closed_form_terminal: bool,
 ) -> torch.Tensor:
     obs = batch["observation"]
@@ -108,7 +110,7 @@ def compute_critic_loss(
         # compute value target
         next_act, logp = sample_actor(next_obs, actor)
         q1_next, q2_next = critic_target(next_obs, next_act)
-        q_next = torch.min(q1_next, q2_next)
+        q_next = torch.min(q1_next, q2_next).clip(-q_max, q_max)
         v_next = q_next - alpha * logp
         q_target = compute_q_target(
             rwd, v_next, done, gamma, 
@@ -116,8 +118,10 @@ def compute_critic_loss(
         )
 
     q1, q2 = critic(obs, act)
-    q1_loss = nn.SmoothL1Loss()(q1, q_target)
-    q2_loss = nn.SmoothL1Loss()(q2, q_target)
+    q1 = q1.clip(-q_max, q_max)
+    q2 = q2.clip(-q_max, q_max)
+    q1_loss = torch.pow(q1 - q_target, 2).mean()
+    q2_loss = torch.pow(q2 - q_target, 2).mean()
     q_loss = (q1_loss + q2_loss) / 2
 
     stats = {"critic_loss": q_loss.detach().cpu().numpy()}
@@ -131,13 +135,14 @@ def update_critic(
     actor: nn.Module, 
     gamma: float, 
     alpha: float | torch.Tensor,
+    q_max: float,
     closed_form_terminal: bool,
     optimizer: torch.optim.Optimizer,
     grad_clip: float | None = None,
 ):
     optimizer.zero_grad()
     loss, stats = compute_critic_loss(
-        batch, critic, critic_target, actor, gamma, alpha, closed_form_terminal
+        batch, critic, critic_target, actor, gamma, alpha, q_max, closed_form_terminal
     )
     loss.backward()
     if grad_clip is not None:
@@ -207,14 +212,35 @@ def update_actor(
         actor_stats.update(alpha_stats)
     return actor_stats
 
+def sample_buffer(
+    expert_buffer: ReplayBuffer, 
+    transition_buffer: ReplayBuffer, 
+    batch_size: int, 
+    rollout_expert_ratio: float,
+):
+    batch_size_expert = int(batch_size * rollout_expert_ratio)
+    batch_size_transition = batch_size - batch_size_expert
+
+    obs_expert = expert_buffer.sample(batch_size_expert)
+    obs_transition = transition_buffer.sample(batch_size_transition)
+    obs = torch.cat([obs_expert, obs_transition], dim=0)
+    
+    device = obs["observation"].device
+    delta_dim = obs["observation"].shape[-1]
+    obs = TensorDict(
+        {
+            "observation": obs["observation"],
+            "delta": torch.zeros(batch_size, delta_dim, dtype=torch.float32, device=device),
+            "terminated": obs["terminated"],
+        },
+        batch_size=batch_size,
+    )
+    return obs
+
 @torch.compile
 @torch.no_grad()
-def compute_ensemble_penalty(
-    dynamics: EnsembleDynamics,
-    obs: TensorDict,
-):
+def compute_ensemble_penalty(dist):
     """Compute ensemble standard deviation penalty"""
-    dist = dynamics.get_dist(obs["observation"], obs["action"])
     mean = dist.mean
     variance = dist.variance
     mean_of_vars = torch.mean(variance, dim=-2)
@@ -229,7 +255,10 @@ def step_dynamics(
     obs: TensorDict,
     termination_fn: Callable | None = None,
 ):
-    delta = dynamics.sample_dist(obs["observation"], obs["action"])
+    delta, ensemble_pen = dynamics.sample_dist(
+        obs["observation"], obs["action"], 
+        callback=compute_ensemble_penalty,
+    )
     next_obs = obs["observation"] + delta
     terminated = obs["terminated"].clone()
     if termination_fn is not None:
@@ -237,7 +266,7 @@ def step_dynamics(
         terminated = torch.cat([obs["terminated"], terminated], dim=-1).any(-1, keepdim=True)
 
     obs["next"] = TensorDict(
-        {"observation": next_obs, "terminated": terminated}, 
+        {"observation": next_obs, "terminated": terminated, "ensemble_pen": ensemble_pen}, 
         batch_size=len(next_obs),
     )
     return obs
@@ -246,7 +275,6 @@ def compute_reward_loss(
     real_batch: TensorDict,
     fake_batch: TensorDict,
     reward: RewardModel,
-    gamma: float,
     grad_target: float,
     grad_penalty: float,
     l2_penalty: float,
@@ -261,15 +289,10 @@ def compute_reward_loss(
     real_rwd = reward.forward_on_inputs(real_rwd_inputs)
     fake_rwd = reward.forward_on_inputs(fake_rwd_inputs)
     
-    seq_len = real_rwd_inputs.shape[1]
-    gamma_seq = gamma ** torch.arange(seq_len).view(1, -1, 1)
-    real_return = torch.sum(gamma_seq * real_rwd, dim=1) / seq_len
-    fake_return = torch.sum(gamma_seq * fake_rwd, dim=1) / seq_len
-
-    reward_loss = -(real_return.mean() - fake_return.mean())
+    reward_loss = -(real_rwd.mean() - fake_rwd.mean())
     gp, g_norm = compute_grad_penalty(
-        real_rwd_inputs.flatten(0, 1), 
-        fake_rwd_inputs.flatten(0, 1), 
+        real_rwd_inputs, 
+        fake_rwd_inputs, 
         reward.forward_on_inputs, 
         grad_target,
         penalty_type="margin",
@@ -295,7 +318,6 @@ def update_reward(
     real_batch: TensorDict,
     fake_batch: TensorDict,
     reward: RewardModel,
-    gamma: float,
     grad_target: float,
     grad_penalty: float,
     l2_penalty: float,
@@ -307,7 +329,6 @@ def update_reward(
         real_batch,
         fake_batch,
         reward,
-        gamma,
         grad_target,
         grad_penalty,
         l2_penalty,
@@ -323,6 +344,7 @@ class Trainer(BaseTrainer):
     """Offline maximum likelihood inverse reinforcement learning
 
     Using MOPO with automatic ensemble penalty tuning as the RL solver [2, 3].
+    We replace the trajectory reward loss from [1] with the standard reward loss from replay buffer in GAIL style implementations.
 
     [1] When Demonstrations Meet Generative World Models: A Maximum Likelihood Framework for Offline Inverse Reinforcement Learning, Zeng et al, 2023 (https://arxiv.org/abs/2302.07457)
     [2] MOPO: Model-based Offline Policy Optimization, Yu et al, 2020 (https://arxiv.org/abs/2005.13239)
@@ -404,6 +426,7 @@ class Trainer(BaseTrainer):
         gamma = self.config.gamma
         alpha = self.alpha
         tune_alpha = self.config.tune_alpha
+        q_max = self.config.q_max
         closed_form_terminal = self.config.closed_form_terminal
         grad_clip = self.config.grad_clip
 
@@ -412,8 +435,7 @@ class Trainer(BaseTrainer):
             batch["reward"] = self.reward.forward(
                 batch["observation"], batch["action"], batch["terminated"].float()
             )
-            ensemble_pen = compute_ensemble_penalty(self.dynamics, batch)
-            batch["reward"] -= self.lam * ensemble_pen
+            batch["reward"] -= self.lam * batch["next"]["ensemble_pen"]
 
         critic_stats = update_critic(
             batch,
@@ -422,6 +444,7 @@ class Trainer(BaseTrainer):
             self.actor,
             gamma,
             alpha,
+            q_max,
             closed_form_terminal,
             self.optimizers["critic"],
             grad_clip,
@@ -475,7 +498,6 @@ class Trainer(BaseTrainer):
         return policy_stats_epoch
     
     def take_reward_gradient_step(self, real_batch: TensorDict, fake_batch: TensorDict, global_step: int):
-        gamma = self.config.gamma
         grad_target = self.config.reward_grad_target
         grad_penalty = self.config.reward_grad_penalty
         l2_penalty = self.config.reward_l2_penalty
@@ -485,7 +507,6 @@ class Trainer(BaseTrainer):
             real_batch,
             fake_batch,
             self.reward,
-            gamma,
             grad_target,
             grad_penalty,
             l2_penalty,
@@ -500,21 +521,12 @@ class Trainer(BaseTrainer):
     
     def train_reward_epoch(self, global_step: int):
         train_steps = self.config.reward_train_steps
-        batch_size = self.config.reward_rollout_batch_size
-        traj_len = self.config.reward_rollout_steps
+        batch_size = self.config.reward_batch_size
 
         reward_stats_epoch = []
         for _ in range(train_steps):
-            real_batch = self.expert_buffer.sample(batch_size * traj_len).reshape(-1, traj_len)
-            fake_batch = self.sample_imagined_data(
-                batch_size, 
-                traj_len, 
-                obs=real_batch["observation"][:, 0], 
-                terminated_early=False,
-                add_penalty=False,
-                save_to_buffer=False,
-                return_data=True,
-            )
+            real_batch = self.expert_buffer.sample(batch_size)
+            fake_batch = self.replay_buffer.sample(batch_size)
             reward_stats = self.take_reward_gradient_step(real_batch, fake_batch, global_step)
             reward_stats_epoch.append(reward_stats)
 
@@ -553,15 +565,19 @@ class Trainer(BaseTrainer):
         save_to_buffer: bool = True,
         return_data: bool = False,
     ):
+        rollout_expert_ratio = self.config.rollout_expert_ratio
         rollout_max_obs = self.config.rollout_max_obs
 
         if obs is None:
-            obs = self.transition_buffer.sample(rollout_batch_size)["observation"]
+            obs = sample_buffer(
+                self.expert_buffer, self.transition_buffer, rollout_batch_size, rollout_expert_ratio
+            )["observation"]
         
         obs = TensorDict(
             {
                 "observation": obs.clone(), 
                 "terminated": torch.zeros(rollout_batch_size, 1, device=obs.device).bool(),
+                "ensemble_pen": torch.zeros(rollout_batch_size, 1, device=obs.device).float(),
             },
             batch_size=rollout_batch_size,
         )
@@ -573,7 +589,7 @@ class Trainer(BaseTrainer):
             obs = step_dynamics(self.dynamics, obs, termination_fn=self.termination_fn)
 
             if add_penalty:
-                ensemble_pen = compute_ensemble_penalty(self.dynamics, obs)
+                ensemble_pen = obs["next"]["ensemble_pen"]
                 self.update_lam(ensemble_pen)
                 if self.logger is not None:
                     self.logger.log_scalar(f"dynamics/ensemble_pen", ensemble_pen.mean().cpu().numpy(), global_step)
@@ -677,8 +693,8 @@ class Trainer(BaseTrainer):
                 pbar.set_description(desc_str)
 
                 # checkpoint handling
-                # if save_steps not in [None, -1] and (epoch + 1) % save_steps == 0:
-                    # self.save()
+                if save_steps not in [None, -1] and (epoch + 1) % save_steps == 0:
+                    self.save()
         
         pbar.close()
         self.close_envs()

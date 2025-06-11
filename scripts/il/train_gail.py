@@ -3,6 +3,7 @@ from cleanil.utils import (
     set_seed, 
     get_device, 
     get_logger, 
+    write_json,
     LoggerConfig,
 )
 from cleanil.data import load_d4rl_expert_trajs
@@ -17,6 +18,7 @@ def main():
     config = load_yaml()
     env_config = EnvConfig(**config["env"])
     algo_config = gail.GAILConfig(**config["algo"])
+    write_json(config, f"{algo_config.save_path}/config.json")
 
     set_seed(config["seed"])
     device = get_device(config["device"])

@@ -223,13 +223,14 @@ class EnsembleDynamics(nn.Module):
         mixture_logp = torch.logsumexp(logp + log_elites.unsqueeze(-1), dim=-2)
         return mixture_logp
     
-    def sample_dist(self, obs, act, sample_mean=False):
+    def sample_dist(self, obs, act, sample_mean=False, callback=None):
         """Ancestral sampling from ensemble
         
         Args:
             obs (torch.tensor): normalized observations. size=[..., obs_dim]
             act (torch.tensor): normaized actions. size=[..., act_dim]
             sample_mean (bool, optional): whether to sample mean. Default=False
+            callback (callable, none): function to call on dist.
 
         Returns:
             out (torch.tensor): predictions sampled from ensemble member in topk_dist. size=[..., out_dim]
@@ -245,6 +246,10 @@ class EnsembleDynamics(nn.Module):
         ensemble_idx_obs = ensemble_idx.unsqueeze(-1).repeat_interleave(self.out_dim, dim=-1) # duplicate alone feature dim
 
         out = torch.gather(out, -2, ensemble_idx_obs).squeeze(-2)
+
+        if callback is not None:
+            aux = callback(dist)
+            return out, aux
         return out
     
     def compute_loss(self, inputs: torch.Tensor, targets: torch.Tensor) -> torch.Tensor:

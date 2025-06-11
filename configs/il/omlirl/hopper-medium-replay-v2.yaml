@@ -28,11 +28,10 @@ algo:
   reward_state_only: false
   reward_grad_target: 1.
   reward_grad_penalty: 10.
-  reward_l2_penalty: 1.e-3
-  reward_rollout_batch_size: 64
-  reward_rollout_steps: 100
+  reward_l2_penalty: 1.e-5
+  reward_batch_size: 256
   lr_reward: 3.e-4
-  update_reward_every: 1000
+  update_reward_every: 10
   reward_train_steps: 1
 
   lam: 1.
@@ -53,7 +52,7 @@ algo:
   activation: "silu"
   gamma: 0.99
   polyak: 0.995
-  alpha: 1.
+  alpha: 0.1
   tune_alpha: true
   batch_size: 256
   real_ratio: 0.5

@@ -8,7 +8,7 @@ import torch
 import torch.nn as nn
 from optree import tree_map
 from cleanil.base_trainer import BaseTrainer, BaseTrainerConfig
-from cleanil.rl.critic import DoubleQNetwork, compute_q_target, update_critic_target
+from cleanil.rl.critic import DoubleQNetwork, update_critic_target
 from cleanil.rl.actor import TanhNormalActor, sample_actor, compute_action_likelihood
 from cleanil.il.reward import compute_grad_penalty
 from cleanil.utils import freeze_model_parameters
@@ -77,15 +77,15 @@ def compute_critic_loss(
 ) -> torch.Tensor:
     obs_expert = expert_batch["observation"]
     act_expert = expert_batch["action"]
-    done_expert = expert_batch["terminated"]
+    done_expert = expert_batch["terminated"].float()
     next_obs_expert = expert_batch["next"]["observation"]
-    next_done_expert = expert_batch["next"]["terminated"]
+    next_done_expert = expert_batch["next"]["terminated"].float()
 
     obs_transition = transition_batch["observation"]
     act_transition = transition_batch["action"]
-    done_transition = transition_batch["terminated"]
+    done_transition = transition_batch["terminated"].float()
     next_obs_transition = transition_batch["next"]["observation"]
-    next_done_transition = transition_batch["next"]["terminated"]
+    next_done_transition = transition_batch["next"]["terminated"].float()
 
     obs = torch.cat([obs_expert, obs_transition], dim=0)
     act = torch.cat([act_expert, act_transition], dim=0)

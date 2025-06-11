@@ -1,8 +1,9 @@
 from cleanil.utils import (
-    load_yaml, 
+    parse_configs, 
     set_seed, 
     get_device, 
     get_logger, 
+    write_json,
     LoggerConfig,
 )
 from cleanil.data import load_d4rl_expert_trajs, normalize, train_test_split
@@ -14,9 +15,14 @@ from torchrl.data import LazyTensorStorage, ReplayBuffer
 from torchrl.envs.transforms import ObservationNorm
 
 def main():
-    config = load_yaml()
+    config = parse_configs(
+        EnvConfig(), 
+        ibc.IBCConfig(),
+        LoggerConfig(),
+    )
     env_config = EnvConfig(**config["env"])
     algo_config = ibc.IBCConfig(**config["algo"])
+    write_json(config, f"{algo_config.save_path}/config.json")
 
     set_seed(config["seed"])
     device = get_device(config["device"])

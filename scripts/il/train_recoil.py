@@ -1,8 +1,9 @@
 from cleanil.utils import (
-    load_yaml, 
+    parse_configs, 
     set_seed, 
     get_device, 
     get_logger, 
+    write_json,
     LoggerConfig,
 )
 from cleanil.data import (
@@ -25,9 +26,14 @@ from torchrl.envs.transforms import ObservationNorm
 from cleanil.envs.termination import get_termination_fn
 
 def main():
-    config = load_yaml()
+    config = parse_configs(
+        EnvConfig(), 
+        recoil.RECOILConfig(),
+        LoggerConfig(),
+    )
     env_config = EnvConfig(**config["env"])
     algo_config = recoil.RECOILConfig(**config["algo"])
+    write_json(config, f"{algo_config.save_path}/config.json")
 
     set_seed(config["seed"])
     device = get_device(config["device"])
