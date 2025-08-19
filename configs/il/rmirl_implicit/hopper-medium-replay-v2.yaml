@@ -1,0 +1,86 @@
+seed: 0
+device: cpu
+
+env:
+  name: Hopper-v4
+  task: ""
+  library: gymnasium
+  max_episode_steps: 1000
+  num_workers: 1
+
+dynamics:
+  ensemble_dim: 7
+  topk: 5
+  hidden_dims: [200, 200, 200]
+  activation: silu
+  min_std: 0.04
+  max_std: 1.6
+  decays: [0.000025, 0.00005, 0.000075, 0.000075, 0.0001]
+
+algo:
+  expert_dataset: "hopper-expert-v2"
+  transition_dataset: "hopper-medium-replay-v2"
+  pretrained_model_path: ../../exp/dynamics/ensemble/hopper-medium-replay-v2/model.p
+  num_expert_trajs: 10
+  transition_data_size: 1000000
+
+  q_max: 1000.
+  use_double: true
+  use_done: false
+  ibc_penalty: 1.
+  td_penalty: 0.5
+  grad_target: 600.
+  grad_penalty: 10.
+  decouple_loss: true
+
+  model_eval_ratio: 0.2
+  obs_penalty: 1.
+  adv_penalty: 0.05
+  adv_rollout_steps: 20
+  adv_clip_max: 10.
+  norm_advantage: true
+  lr_model: 1.e-4
+  model_train_batch_size: 256
+  model_train_steps: 100
+  update_model_every: 1000
+  
+  rollout_expert_ratio: 0.5
+  rollout_batch_size: 5000
+  rollout_min_steps: 20
+  rollout_max_steps: 20
+  rollout_min_epoch: 50
+  rollout_max_epoch: 200
+  sample_model_every: 250
+  model_retain_epochs: 5
+
+  hidden_dims: [256, 256, 256]
+  activation: "silu"
+  gamma: 0.99
+  polyak: 0.995
+  alpha: 0.1
+  tune_alpha: false
+  batch_size: 256
+  policy_train_steps: 1
+  lr_actor: 3.e-4
+  lr_critic: 3.e-4
+  lr_critic_min: 1.e-5
+  warmup_epochs: 300
+  grad_clip: 1000.
+
+  buffer_size: 1000000
+  max_eps_steps: 1000
+  epochs: 1000
+  steps_per_epoch: 1000
+  num_eval_eps: 1
+  eval_steps: 1000
+
+  save_path: ../../exp/il/rmirl_implicit/hopper-medium-replay-v2
+  save_steps: 1
+
+logger:
+  backend: wandb
+  log_dir: ../../log
+  project_name: cleanil_rmirl_implicit_hopper
+  group_name: null
+  exp_name: medium_replay
+  wandb_mode: online
