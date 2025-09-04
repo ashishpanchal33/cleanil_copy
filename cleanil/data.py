@@ -101,3 +101,73 @@ def train_test_split(data: TensorDict, train_ratio: float, max_eval_size: float 
     eval_size = min(eval_size, max_eval_size)
     train_data, eval_data = torch.split(data, [len(data) - eval_size, eval_size])
     return train_data, eval_data
+
+
+
+
+# for custom dataset
+def load_custom_expert_trajs(dataset, obs_dim, act_dim, action_bounds=None):
+    """
+    Load expert trajectories from HuggingFace datasets or other sources
+    
+    Args:
+        dataset: Your loaded dataset (e.g., from load_dataset)
+        obs_dim: Observation dimension 
+        act_dim: Action dimension
+        action_bounds: (min, max) tuple for action bounds
+    
+    Returns:
+        TensorDict: Formatted trajectory data
+    """
+    import torch
+    from tensordict import TensorDict
+    
+    trajectories = []
+    
+    for episode in dataset:
+        # Extract trajectory data - adjust keys based on your dataset format
+        observations = torch.tensor(episode['observations'], dtype=torch.float32)
+        actions = torch.tensor(episode['actions'], dtype=torch.float32)
+        
+        # Create next observations (shift by 1)
+        next_observations = torch.cat([observations[1:], observations[-1:]], dim=0)
+        
+        # Create episode data
+        episode_length = len(observations)
+        episode_data = TensorDict({
+            'observation': observations,
+            'action': actions,
+            'reward': torch.zeros(episode_length, 1),  # IQ-Learn doesn't use rewards
+            'terminated': torch.cat([torch.zeros(episode_length-1), torch.ones(1)]).bool(),
+            'truncated': torch.zeros(episode_length).bool(),
+            'done': torch.cat([torch.zeros(episode_length-1), torch.ones(1)]).bool(),
+            'next': TensorDict({
+                'observation': next_observations,
+                'reward': torch.zeros(episode_length, 1),
+                'terminated': torch.cat([torch.zeros(episode_length-1), torch.ones(1)]).bool(),
+                'truncated': torch.zeros(episode_length).bool(),
+                'done': torch.cat([torch.zeros(episode_length-1), torch.ones(1)]).bool(),
+            }, batch_size=[episode_length])
+        }, batch_size=[episode_length])
+        
+        trajectories.append(episode_data)
+    
+    # Concatenate all trajectories
+    full_data = torch.cat(trajectories, dim=0)
+    return full_data
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+    
