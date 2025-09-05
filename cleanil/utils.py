@@ -15,6 +15,11 @@ from torchrl.record.loggers import Logger
 from tensordict import TensorDict
 from typing import Optional
 
+
+import os
+import json
+
+
 @dataclass
 class LoggerConfig:
     backend: str = "wandb"
@@ -120,9 +125,12 @@ def make_dir(path: str):
         os.makedirs(path)
 
 def write_json(file: dataclass, path: str):
+    os.makedirs(os.path.dirname(path), exist_ok=True)    # ensure parent dir exists
     _file = asdict(file) if is_dataclass(file) else file
     with open(path, "w") as f:
         json.dump(_file, f)
+
+
 
 def get_device(device: str):
     if device == "cuda":

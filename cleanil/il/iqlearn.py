@@ -442,6 +442,69 @@ class Trainer(BaseTrainer):
         if self.logger is not None:
             for metric_name, metric_value in stats.items():
                 self.logger.log_scalar(metric_name, metric_value, global_step)
+
+    
+    def eval_recovered_rewards(self, global_step: int, num_samples=1000):
+        with torch.no_grad():
+            train_batch = self.expert_buffer.sample(num_samples)
+            eval_batch = self.eval_buffer.sample(num_samples)
+            
+            exp_obs = train_batch["observation"]
+            exp_act = train_batch["action"] 
+            exp_next_obs = train_batch["next"]["observation"]
+
+            eval_obs = eval_batch["observation"]
+            eval_act = eval_batch["action"] 
+            eval_next_obs = eval_batch["next"]["observation"]            
+            
+            # Compute Q(s,a)
+            exp_q1, exp_q2 = self.critic(exp_obs, exp_act)
+            exp_q_values = torch.min(exp_q1, exp_q2 )
+            
+            # Compute V(s') = E[Q(s',a')] by sampling actions
+            exp_next_actions, _ = sample_actor(exp_next_obs, self.actor)
+            exp_q1_next, exp_q2_next = self.critic(exp_next_obs, exp_next_actions)
+            exp_v_next = torch.min(exp_q1_next, exp_q2_next)
+            
+            # Recover rewards: r = Q(s,a) - γ*V(s')
+            train_recovered_rewards = exp_q_values - self.config.gamma * exp_v_next
+
+
+            # Compute Q(s,a)
+            eval_q1, eval_q2 = self.critic(eval_obs, eval_act)
+            eval_q_values = torch.min(eval_q1, eval_q2)
+            
+            # Compute V(s') = E[Q(s',a')] by sampling actions
+            eval_next_actions, _ = sample_actor(eval_next_obs, self.actor)
+            eval_q1_next, eval_q2_next = self.critic(eval_next_obs, eval_next_actions)
+            eval_v_next = torch.min(eval_q1_next, eval_q2_next)
+            
+            # Recover rewards: r = Q(s,a) - γ*V(s')
+            eval_recovered_rewards = eval_q_values - self.config.gamma * eval_v_next
+
+
+
+
+
+            
+            stats = {
+                "recovered_train_reward_mean": train_recovered_rewards.mean().cpu().numpy(),
+                "recovered_train_reward_std": train_recovered_rewards.std().cpu().numpy(),
+                "recovered_eval_reward_mean": eval_recovered_rewards.mean().cpu().numpy(),
+                "recovered_eval_reward_std": eval_recovered_rewards.std().cpu().numpy(),
+            }
+            
+            if self.logger is not None:
+                for name, value in stats.items():
+                    self.logger.log_scalar(name, value, global_step)
+
+            
+    
+    
+
+
+
+
     
     def train(self):
         config = self.config
@@ -490,3 +553,104 @@ class Trainer(BaseTrainer):
         pbar.close()
         self.close_envs()
         self.save()
+
+
+
+class OfflineTrainer(Trainer):
+    """
+    Modified IQ-Learn trainer that works without environment access
+    """
+    def __init__(
+        self, 
+        config: IQLearnConfig,
+        actor: TanhNormalActor,
+        critic: DoubleQNetwork,
+        expert_buffer: ReplayBuffer,
+        eval_buffer: Optional[ReplayBuffer],
+        obs_mean: torch.Tensor,
+        obs_std: torch.Tensor,
+        act_dim: int,  # Pass action dimension instead of eval_env
+        logger: Optional[Logger] = None,
+        device: torch.device = "cpu",
+    ):
+        # Initialize BaseTrainer directly without eval_env
+        BaseTrainer.__init__(
+            self, config, None, None, None, logger, device  # All env params = None
+        )
+        
+        self.config = config
+        self.expert_buffer = expert_buffer
+        self.eval_buffer = eval_buffer
+
+        self.actor = actor
+        self.critic = critic
+        self.critic_target = copy.deepcopy(self.critic)
+        self.log_alpha = nn.Parameter(
+            np.log(config.alpha) * torch.ones(1, device=device), 
+            requires_grad=config.tune_alpha,
+        )
+        self.alpha = self.log_alpha.data.exp()
+        
+        # FIXED: Calculate alpha_target manually instead of from eval_env
+        self.alpha_target = -torch.tensor(act_dim, dtype=torch.float32, device=device)
+
+        freeze_model_parameters(self.critic_target)
+
+        # Rest of initialization...
+        self.optimizers = {
+            "actor": torch.optim.Adam(self.actor.parameters(), lr=config.lr_actor),
+            "critic": torch.optim.Adam(self.critic.parameters(), lr=config.lr_critic),
+            "alpha": torch.optim.Adam([self.log_alpha], lr=config.lr_actor),
+        }
+
+        # Store modules for checkpointing
+        self._modules["actor"] = self.actor
+        self._modules["critic"] = self.critic
+        self._modules["critic_target"] = self.critic_target
+        self._modules["log_alpha"] = self.log_alpha
+        self._modules["obs_mean"] = nn.Parameter(obs_mean, requires_grad=False)
+        self._modules["obs_std"] = nn.Parameter(obs_std, requires_grad=False)
+    
+    def train(self):
+        """Modified train method without environment evaluation"""
+        config = self.config
+        epochs = config.epochs
+        steps_per_epoch = config.steps_per_epoch
+        save_steps = config.save_steps
+
+        total_steps = epochs * steps_per_epoch
+        start_time = time.time()
+        
+        epoch = 0
+        pbar = tqdm(range(total_steps))
+        for t in pbar:
+            policy_stats_epoch = self.train_policy_epoch(t)
+
+            # End of epoch handling
+            if (t + 1) % steps_per_epoch == 0:
+                epoch = (t + 1) // steps_per_epoch
+
+                # CHANGE: Only evaluate action likelihood (no environment rollouts)
+                self.eval_action_likelihood(t)
+                self.eval_recovered_rewards(t)
+                
+                speed = (t + 1) / (time.time() - start_time)
+                if self.logger is not None:
+                    self.logger.log_scalar("train_speed", speed, t)
+                
+                desc_str = f"epoch: {epoch}/{epochs}, step: {t}"
+                pbar.set_description(desc_str)
+
+                # Checkpoint handling
+                if save_steps not in [None, -1] and (epoch + 1) % save_steps == 0:
+                    self.save()
+        
+        pbar.close()
+        self.save()
+
+
+
+
+
+
+

@@ -158,6 +158,60 @@ def load_custom_expert_trajs(dataset, obs_dim, act_dim, action_bounds=None):
 
 
 
+# Add your custom data loader
+from datasets import load_dataset
+import torch
+
+def load_custom_expert_trajs_hugging_face(dataset_name, num_expert_trajs, obs_dim, act_dim):
+    """Your custom data loading function"""
+    # Load from HuggingFace datasets
+    dataset = load_dataset(dataset_name, split="train")
+    
+    # Convert to the required format (implement based on your dataset structure)
+    # This is a template - adjust based on your actual data format
+    trajectories = []
+    
+    for i, episode in enumerate(dataset):
+        if i >= num_expert_trajs:
+            break
+            
+        # Extract data - adjust these key names based on your dataset
+        observations = torch.tensor(episode['observations'], dtype=torch.float32)
+        actions = torch.tensor(episode['actions'], dtype=torch.float32)
+        
+        # Ensure correct shapes
+        if len(observations.shape) == 1:
+            observations = observations.unsqueeze(-1)
+        if len(actions.shape) == 1:
+            actions = actions.unsqueeze(-1)
+            
+        next_observations = torch.cat([observations[1:], observations[-1:]], dim=0)
+        episode_length = len(observations)
+        
+        from tensordict import TensorDict
+        episode_data = TensorDict({
+            'observation': observations,
+            'action': actions,
+            'reward': torch.zeros(episode_length, 1),
+            'terminated': torch.cat([torch.zeros(episode_length-1), torch.ones(1)]).bool(),
+            'truncated': torch.zeros(episode_length).bool(), 
+            'done': torch.cat([torch.zeros(episode_length-1), torch.ones(1)]).bool(),
+            'next': TensorDict({
+                'observation': next_observations,
+                'reward': torch.zeros(episode_length, 1),
+                'terminated': torch.cat([torch.zeros(episode_length-1), torch.ones(1)]).bool(),
+                'truncated': torch.zeros(episode_length).bool(),
+                'done': torch.cat([torch.zeros(episode_length-1), torch.ones(1)]).bool(),
+            }, batch_size=[episode_length])
+        }, batch_size=[episode_length])
+        
+        trajectories.append(episode_data)
+    
+    if trajectories:
+        return torch.cat(trajectories, dim=0)
+    else:
+        raise ValueError("No trajectories loaded")
+
 
 
 
