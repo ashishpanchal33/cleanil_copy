@@ -1,11 +1,17 @@
-# config/offline_cartpole.yaml
 seed: 0
 device: cpu
 
 algo:
-  dataset: "NathanGavenski/CartPole-v1"  # Your dataset name
+  dataset: "NathanGavenski/CartPole-v1"
   num_expert_trajs: 500
   train_ratio: 0.9
+
+    
+  obs_dim : 4
+  act_dim : 1
+  num_actions: 2
+
+  
   
   actor_loss: "awr"
   action_mask_noise: 0.1
@@ -28,15 +34,15 @@ algo:
 
   epochs: 50
   steps_per_epoch: 1000
-  num_eval_eps: 0  # Set to 0 to disable environment evaluation
+  num_eval_eps: 0
 
-  save_path: ./exp/offline_cartpole
+  save_path: ./exp/offline_cartpole_discrete
   save_steps: 50
 
 logger:
   backend: wandb
   log_dir: ./log
-  project_name: offline_iqlearn_cartpole
+  project_name: offline_iqlearn_cartpole_discrete
   group_name: null
-  exp_name: cartpole_offline
+  exp_name: cartpole_discrete_offline
   wandb_mode: online
