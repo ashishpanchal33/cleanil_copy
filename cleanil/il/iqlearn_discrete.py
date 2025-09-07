@@ -64,6 +64,9 @@ class IQLearnConfig(BaseTrainerConfig):
     obs_dim : int = 4,
     act_dim : int = 1,
     num_actions: int = 2,
+    id_:object = None,
+
+    load_local_csv: bool = False,
 
     # reward args
     actor_loss: str = "awr"
@@ -75,6 +78,7 @@ class IQLearnConfig(BaseTrainerConfig):
 
     # rl args
     hidden_dims: list = (256, 256)
+    dropout: float = 0.3
     activation: str = "silu"
     gamma: float = 0.99
     polyak: float = 0.995
@@ -120,6 +124,11 @@ def compute_critic_loss_discrete(
     next_obs = batch["next"]["observation"]              # [B, obs_dim]
 
     # 1. Target Q for next states (all actions)
+    #print('***'*50)
+    #print(obs.shape,next_obs.shape,critic_target.obs_dim, critic.obs_dim)
+
+
+    
     q1_next_all, q2_next_all = critic_target(next_obs)   # [B, num_actions] each
     q_next_all = torch.min(q1_next_all, q2_next_all)     # [B, num_actions]
     v_next = alpha * torch.logsumexp(q_next_all / alpha, dim=-1, keepdim=True)  # [B,1]
@@ -225,14 +234,15 @@ def update_critic_discrete(
 
 class DiscreteOfflineTrainer(BaseTrainer):
     def __init__(self, config, critic, expert_buffer, eval_buffer, 
-                 obs_mean, obs_std, num_actions, logger=None, device="cpu"):
+                 obs_mean, obs_std, num_actions, logger=None, device="cpu", whole_data_buffer = None):
         BaseTrainer.__init__(self, config, None, None, None, logger, device)
-        
+
+        self.whole_data_buffer = whole_data_buffer
         self.config = config
         self.expert_buffer = expert_buffer
         self.eval_buffer = eval_buffer
         self.num_actions = num_actions
-        
+        self.device = device
         self.critic = critic
         self.critic_target = copy.deepcopy(self.critic)
         self.alpha = torch.tensor(config.alpha, device=device)
@@ -324,6 +334,8 @@ class DiscreteOfflineTrainer(BaseTrainer):
 
 
 
+
+    
     def eval_discrete_action_likelihood(self, global_step: int, num_samples=1000):
         def eval_func(batch):
             obs = batch["observation"]
@@ -343,19 +355,50 @@ class DiscreteOfflineTrainer(BaseTrainer):
             
             return logp, accuracy
 
+        def eval_whole(dataloader): # this is currently running on the whole data ... therefore is not correct
+
+            
+            with torch.no_grad():
+                total_log_likelihood = 0.0
+                storage = dataloader.storage
+                for start in range(0, len(storage), self.config.batch_size):
+                    batch = storage[start : start + self.config.batch_size]  # should only materialize B items
+                    batch = batch.to(self.device)
+                    
+                    obs = batch["observation"]
+                    act = batch["action"].squeeze(-1).long()  # [batch]
+                        
+                    # 1. Get Q-values for all actions from both networks
+                    q1_all, q2_all = self.critic(obs)                   # each [B, num_actions]
+                    q_all = torch.min(q1_all, q2_all)                   # [B, num_actions]
+                        
+                    # Convert to policy probabilities
+                    logp_all = torch.log_softmax(q_all, dim=-1)  # [batch, num_actions]
+                    logp = logp_all.gather(1, act.unsqueeze(-1))  # [batch, 1]
+        
+
+                    total_log_likelihood += torch.sum(logp).item()
+            return total_log_likelihood
+
+
+            
+
         
         with torch.no_grad():
             train_batch = self.expert_buffer.sample(num_samples)
             eval_batch = self.eval_buffer.sample(num_samples)
             train_logp, train_acc = eval_func(train_batch)
             eval_logp, eval_acc = eval_func(eval_batch)
+            if self.whole_data_buffer:
+                Total_LL = eval_whole(self.whole_data_buffer)
+            
     
         stats = {
             "train_act_logp": train_logp.mean().detach().cpu().numpy(), 
             "train_act_accuracy": train_acc.detach().cpu().numpy(),
             "eval_act_logp": eval_logp.mean().detach().cpu().numpy(), 
             "eval_act_accuracy": eval_acc.detach().cpu().numpy(),
-        }
+        } | ({"Total_LL":Total_LL}     if self.whole_data_buffer  else {})
         
         if self.logger is not None:
             for metric_name, metric_value in stats.items():

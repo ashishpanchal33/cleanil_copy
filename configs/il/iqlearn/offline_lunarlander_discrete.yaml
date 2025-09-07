@@ -1,15 +1,15 @@
 seed: 0
-device: cpu
+device: cuda
 
 algo:
-  dataset: "NathanGavenski/CartPole-v1"
-  num_expert_trajs: 500
+  dataset: "NathanGavenski/LunarLander-v2"
+  num_expert_trajs: 1000
   train_ratio: 0.9
 
     
-  obs_dim : 4
+  obs_dim : 8
   act_dim : 1
-  num_actions: 2
+  num_actions: 4
 
   
   
@@ -29,20 +29,20 @@ algo:
   batch_size: 256
   policy_train_steps: 1
   lr_actor: 3.e-4
-  lr_critic: 3.e-4
+  lr_critic: 3.e-5
   grad_clip: 1000.
 
-  epochs: 100
-  steps_per_epoch: 1000
+  epochs: 500
+  steps_per_epoch: 500
   num_eval_eps: 0
 
-  save_path: ./exp/offline_cartpole_discrete
+  save_path: ./exp/offline_lunarlander_discrete
   save_steps: 50
 
 logger:
   backend: wandb
   log_dir: ./log
-  project_name: offline_iqlearn_cartpole_discrete
+  project_name: offline_iqlearn_lunarlander_discrete
   group_name: null
-  exp_name: cartpole_discrete_offline
+  exp_name: lunarlander_discrete_offline
   wandb_mode: online

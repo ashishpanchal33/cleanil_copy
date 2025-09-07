@@ -5,14 +5,14 @@ from cleanil.utils import get_activation
 from torchrl.modules import MLP
 
 class DiscreteQNetwork(nn.Module):
-    def __init__(self, obs_dim: int, num_actions: int, hidden_dims: list, activation: str):
+    def __init__(self, obs_dim: int, num_actions: int, hidden_dims: list, activation: str, dropout:float):
         super().__init__()
         self.num_actions = num_actions
         self.q_net = MLP(
             in_features=obs_dim,
             out_features=num_actions,
             num_cells=hidden_dims,
-            activation_class=get_activation(activation),
+            activation_class=get_activation(activation), dropout = dropout
         )
     
     def forward(self, obs, act=None):
@@ -31,10 +31,13 @@ class DiscreteQNetwork(nn.Module):
             return q_selected
 
 class DoubleQNetwork(nn.Module):
-    def __init__(self, obs_dim: int, num_actions: int, hidden_dims: list, activation: str):
+    def __init__(self, obs_dim: int, num_actions: int, hidden_dims: list, activation: str, dropout:float):
         super().__init__()
-        self.q1 = DiscreteQNetwork(obs_dim, num_actions, hidden_dims, activation)
-        self.q2 = DiscreteQNetwork(obs_dim, num_actions, hidden_dims, activation)
+        self.obs_dim = obs_dim
+        self.num_actions = num_actions
+        
+        self.q1 = DiscreteQNetwork(obs_dim, num_actions, hidden_dims, activation, dropout = dropout)
+        self.q2 = DiscreteQNetwork(obs_dim, num_actions, hidden_dims, activation, dropout = dropout)
     
     def forward(self, obs, act=None):
         q1_vals = self.q1(obs, act)
