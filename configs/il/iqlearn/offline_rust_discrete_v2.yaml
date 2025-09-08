@@ -23,7 +23,7 @@ algo:
   l2_penalty: 0.
   td_penalty: 0.5
 
-  hidden_dims: []
+  hidden_dims: [8,8,4,4,4]
   activation: "silu"
   gamma: 0.99
   polyak: 0.995
@@ -40,7 +40,7 @@ algo:
   steps_per_epoch: 1000
   num_eval_eps: 0
 
-  save_path: ./exp/offline_rust_discrete
+  save_path: ./exp/offline_rust_discrete_v2
   save_steps: 10
 
 logger:
@@ -48,5 +48,5 @@ logger:
   log_dir: ./log
   project_name: offline_iqlearn_rust_discrete
   group_name: null
-  exp_name: rust_discrete_offline
+  exp_name: rust_discrete_offline_v2
   wandb_mode: online
