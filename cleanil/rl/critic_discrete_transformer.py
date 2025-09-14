@@ -1,6 +1,9 @@
 # In cleanil/rl/critic_discrete.py
 import torch
 import torch.nn as nn
+
+import math
+
 from cleanil.utils import get_activation
 from torchrl.modules import MLP
 
@@ -8,40 +11,7 @@ from torchrl.modules import MLP
 
 
 
-class DiscreteQNetwork(nn.Module):
-    def __init__(self, obs_dim: int, num_actions: int, hidden_dims: list, activation: str, dropout:float):
-        super().__init__()
-        self.num_actions = num_actions
-        self.q_net = MLP(
-            in_features=obs_dim,
-            out_features=num_actions,
-            num_cells=hidden_dims,
-            activation_class=get_activation(activation), dropout = dropout
-        )
-    
-    def forward(self, obs, act=None):
-        """
-        If act is None, return Q-values for all actions: [batch, num_actions]
-        If act is provided, return Q-values for specific actions: [batch, 1]
-        """
-        q_all = self.q_net(obs)  # [batch, num_actions]
-        
-        if act is None:
-            return q_all
-        else:
-            # act should be [batch, 1] with long dtype
-            act_idx = act.squeeze(-1).long()  # [batch]
-            q_selected = q_all.gather(1, act_idx.unsqueeze(-1))  # [batch, 1]
-            return q_selected
 
-
-
-
-
-
-import torch
-import torch.nn as nn
-import math
 
 # You need a Positional Encoding module, as Transformers don't inherently know sequence order.
 class PositionalEncoding(nn.Module):
@@ -115,49 +85,51 @@ class TransformerQNetwork(nn.Module):
             q_selected = q_all.gather(1, act_idx.unsqueeze(-1))
             return q_selected
 
-# And the DoubleQNetwork wrapper remains almost the same, just passing the new args
-class HistoryDoubleQNetwork(nn.Module):
-    def __init__(self, obs_dim, num_actions, hidden_dims, activation, sequence_length, rnn_hidden_size=128):
+# Assuming TransformerQNetwork and other modules are defined as in the previous answer
+
+class HistoryDoubleQNetwork_transformer(nn.Module):
+    def __init__(self, obs_dim: int, num_actions: int, hidden_dims: list, activation: str,
+                 sequence_length: int, nhead: int, num_layers: int, dropout: float = 0.1):
+        """
+        This wrapper now creates two independent TransformerQNetwork instances.
+        """
         super().__init__()
-        self.q1 = HistoryBasedQNetwork(obs_dim, num_actions, hidden_dims, activation, sequence_length, rnn_hidden_size)
-        self.q2 = HistoryBasedQNetwork(obs_dim, num_actions, hidden_dims, activation, sequence_length, rnn_hidden_size)
+        
+        # Instantiate the first Q-network (q1)
+        self.q1 = TransformerQNetwork(
+            obs_dim=obs_dim,
+            num_actions=num_actions,
+            hidden_dims=hidden_dims,
+            activation=activation,
+            sequence_length=sequence_length,
+            nhead=nhead,
+            num_layers=num_layers,
+            dropout=dropout
+        )
+        
+        # Instantiate the second, separate Q-network (q2)
+        self.q2 = TransformerQNetwork(
+            obs_dim=obs_dim,
+            num_actions=num_actions,
+            hidden_dims=hidden_dims,
+            activation=activation,
+            sequence_length=sequence_length,
+            nhead=nhead,
+            num_layers=num_layers,
+            dropout=dropout
+        )
         
     def forward(self, obs, act=None):
+        # The forward pass logic is unchanged.
+        # It just calls the forward methods of the two underlying transformer networks.
         q1_vals = self.q1(obs, act)
         q2_vals = self.q2(obs, act)
         return q1_vals, q2_vals
 
-# --- In your main script ---
-# The obs_dim is now the history-augmented dimension
-new_obs_dim = whole_data_history["observation"].shape[-1] 
-
-critic = HistoryDoubleQNetwork(
-    new_obs_dim, 
-    num_actions, 
-    algo_config.hidden_dims, 
-    algo_config.activation, 
-    sequence_length=SEQUENCE_LENGTH
-)
-critic.to(device)
 
 
-
-
-
-class DoubleQNetwork(nn.Module):
-    def __init__(self, obs_dim: int, num_actions: int, hidden_dims: list, activation: str, dropout:float):
-        super().__init__()
-        self.obs_dim = obs_dim
-        self.num_actions = num_actions
-        
-        self.q1 = DiscreteQNetwork(obs_dim, num_actions, hidden_dims, activation, dropout = dropout)
-        self.q2 = DiscreteQNetwork(obs_dim, num_actions, hidden_dims, activation, dropout = dropout)
-    
-    def forward(self, obs, act=None):
-        q1_vals = self.q1(obs, act)
-        q2_vals = self.q2(obs, act)
-        return q1_vals, q2_vals
-
+# The rest of your training loop (target network creation, loss calculation)
+# remains exactly the same.
 
 def compute_q_target(r, v_next, done, gamma, closed_form_terminal=False):
     q_target = r + (1 - done) * gamma * v_next

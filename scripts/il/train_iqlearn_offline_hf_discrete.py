@@ -8,6 +8,8 @@ from cleanil.il.iqlearn_discrete import DiscreteOfflineTrainer, IQLearnConfig
 #from cleanil.rl.actor_discrete import make_categorical_actor
 from cleanil.rl.critic_discrete import DoubleQNetwork
 from cleanil.rl.critic_discrete_LSTM import HistoryDoubleQNetwork
+from cleanil.rl.critic_discrete_transformer import HistoryDoubleQNetwork_transformer
+
 
 
 from torchrl.data import LazyTensorStorage, ReplayBuffer
@@ -221,21 +223,6 @@ def main():
 
     
 
-    
-    # --- In your main script ---
-    # The obs_dim is now the history-augmented dimension
-    #new_obs_dim = whole_data_history["observation"].shape[-1] 
-    #
-    #critic = HistoryDoubleQNetwork(
-    #    new_obs_dim, 
-    #    num_actions, 
-    #    algo_config.hidden_dims, 
-    #    algo_config.activation, 
-    #    sequence_length=SEQUENCE_LENGTH
-    #)
-    #critic.to(device)
-    
-
 
     
     
@@ -269,6 +256,20 @@ def main():
             sequence_length=SEQUENCE_LENGTH
         )
 
+    elif algo_config.model == 'transformer':
+
+        critic = HistoryDoubleQNetwork_transformer(
+            obs_dim=obs_dim,
+            num_actions=num_actions,
+            hidden_dims=algo_config.hidden_dims,
+            activation=algo_config.activation,
+            sequence_length=SEQUENCE_LENGTH,
+            nhead=algo_config.nhead,  # Example hyperparameter for the transformer
+            num_layers=algo_config.num_layers # Example hyperparameter for the transformer
+        )
+
+
+    
     else:
 
         # Create discrete critic

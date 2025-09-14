@@ -66,6 +66,8 @@ class IQLearnConfig(BaseTrainerConfig):
     sequential:bool= True
     SEQUENCE_LENGTH:int = 2
     model: str ='lstm'
+    nhead: int = 4
+    num_layers: int = 2 
 
     
     obs_dim : int = 4
