@@ -22,6 +22,7 @@ from cleanil.rl.critic_discrete import DoubleQNetwork, compute_q_target, update_
 
 import torch
 import torch.nn as nn
+import torch.nn.functional as F
 from cleanil.il.reward import compute_grad_penalty
 
 
@@ -60,11 +61,17 @@ class IQLearnConfig(BaseTrainerConfig):
     train_ratio: float = 0.9
 
         
+
+
+    sequential:bool= True
+    SEQUENCE_LENGTH:int = 2
+    model: str ='lstm'
+
     
-    obs_dim : int = 4,
-    act_dim : int = 1,
-    num_actions: int = 2,
-    id_:object = None,
+    obs_dim : int = 4
+    act_dim : int = 1
+    num_actions: int = 2
+    id_: object = None
 
     load_local_csv: bool = False,
 
@@ -75,6 +82,9 @@ class IQLearnConfig(BaseTrainerConfig):
     grad_penalty: float = 10.
     l2_penalty: float = 1.e-6
     td_penalty: float = 0.5
+
+    bc_penalty: float = 0.5, #new
+    temperature: float = 0.1, #new
 
     # rl args
     hidden_dims: list = (256, 256)
@@ -117,6 +127,8 @@ def compute_critic_loss_discrete(
     grad_target: float,
     grad_penalty: float,
     l2_penalty: float,
+    bc_penalty: float, #new
+    temperature: float, 
 ) -> (torch.Tensor, dict):
     obs      = batch["observation"]                      # [B, obs_dim]
     act      = batch["action"].squeeze(-1).long()        # [B]
@@ -170,16 +182,39 @@ def compute_critic_loss_discrete(
         gp,g_norm = 0.0,0.0
 
 
+    # 8 calculate behaviour cloning loss
+
+    q1_all_actions, q2_all_actions = critic(obs) # Shape: [B, num_actions] each
+
+    # Calculate BC loss for the first Q-network
+    loss_bc_1 = F.cross_entropy(q1_all_actions / temperature, act)
+    
+    # Calculate BC loss for the second Q-network
+    loss_bc_2 = F.cross_entropy(q2_all_actions / temperature, act)
+    
+    # Average the two losses to get the final BC regularizer
+    l_bc = (loss_bc_1 + loss_bc_2) / 2.0
+
+
+
     
 
-    # 8. L2 penalty
+    #l_bc = F.cross_entropy(q_real / temperature, act)#.unsqueeze(-1))
+
+
+
+    
+
+    # 9. L2 penalty
     l2 = compute_parameter_l2(critic)
 
-    # 9. Total loss
+    # 10. Total loss
     total_loss = ((1 - td_penalty) * cd_loss
                   + td_penalty * td_loss
                   + grad_penalty * gp
-                  + l2_penalty  * l2)
+                  + l2_penalty  * l2
+                  + bc_penalty*l_bc
+                 )
 
     stats = {
         "critic_loss":      total_loss.item(),
@@ -188,6 +223,7 @@ def compute_critic_loss_discrete(
         "critic_grad_pen":  gp,#gp.item(),
         "critic_grad_norm": g_norm,#g_norm.item(),
         "critic_l2":        l2.item(),
+        "critic_bc_loss":   l_bc.item(),
     }
     return total_loss, stats
 
@@ -209,6 +245,8 @@ def update_critic_discrete(
     l2_penalty: float,
     optimizer: torch.optim.Optimizer,
     grad_clip: float | None = None,
+    bc_penalty: float = 0.5, #new
+    temperature: float = 0.1, 
 ):
     optimizer.zero_grad()
     loss, stats = compute_critic_loss_discrete(
@@ -222,6 +260,12 @@ def update_critic_discrete(
         grad_target, 
         grad_penalty, 
         l2_penalty,
+
+        bc_penalty,#: float, #new
+        temperature,#: float, 
+
+
+        
     )
     loss.backward()
     if grad_clip is not None:
@@ -265,7 +309,8 @@ class DiscreteOfflineTrainer(BaseTrainer):
             self.config.gamma, self.alpha, self.config.td_penalty,
             self.config.grad_target, self.config.grad_penalty, 
             self.config.l2_penalty, self.optimizers["critic"], 
-            self.config.grad_clip,
+            self.config.grad_clip,  self.config.bc_penalty,#: float, #new
+                                    self.config.temperature#: float, 
         )
         
         # Update target network
@@ -351,9 +396,19 @@ class DiscreteOfflineTrainer(BaseTrainer):
             
             # Accuracy instead of MAE
             pred_act = logp_all.argmax(dim=-1)  # [batch]
-            accuracy = (pred_act == act).float().mean()
+            accuracy_base = (pred_act == act).float()
+                
+            accuracy = accuracy_base.mean()
+
+            action_accuracy = []
+            for i in range(self.config.num_actions):
+                action_accuracy.append( accuracy_base[act == i].mean())
+
+            action_logp = []
+            for i in range(self.config.num_actions):
+                action_logp.append( logp[act == i].mean())
             
-            return logp, accuracy
+            return logp, accuracy, action_accuracy, action_logp
 
         def eval_whole(dataloader): # this is currently running on the whole data ... therefore is not correct
 
@@ -387,8 +442,8 @@ class DiscreteOfflineTrainer(BaseTrainer):
         with torch.no_grad():
             train_batch = self.expert_buffer.sample(num_samples)
             eval_batch = self.eval_buffer.sample(num_samples)
-            train_logp, train_acc = eval_func(train_batch)
-            eval_logp, eval_acc = eval_func(eval_batch)
+            train_logp, train_acc, train_action_acc,train_action_logp = eval_func(train_batch)
+            eval_logp, eval_acc,eval_action_acc,eval_action_logp = eval_func(eval_batch)
             if self.whole_data_buffer:
                 Total_LL = eval_whole(self.whole_data_buffer)
             
@@ -398,8 +453,17 @@ class DiscreteOfflineTrainer(BaseTrainer):
             "train_act_accuracy": train_acc.detach().cpu().numpy(),
             "eval_act_logp": eval_logp.mean().detach().cpu().numpy(), 
             "eval_act_accuracy": eval_acc.detach().cpu().numpy(),
-        } | ({"Total_LL":Total_LL}     if self.whole_data_buffer  else {})
-        
+        } | ({"Total_LL":Total_LL}     if self.whole_data_buffer  else {}) | { 
+                        f"train_action_acc_{i}":j.detach().cpu().numpy() for i,j in enumerate(train_action_acc)
+                                                                             } | { 
+                        f"eval_action_acc_{i}":j.detach().cpu().numpy() for i,j in enumerate(eval_action_acc)
+                                                                            } | { 
+                        f"train_action_logp_{i}":j.detach().cpu().numpy() for i,j in enumerate(train_action_logp)
+                                                                             } | { 
+                        f"eval_action_logp_{i}":j.detach().cpu().numpy() for i,j in enumerate(eval_action_logp)}
+
+
+        #print(len(train_action_acc), len(eval_action_acc))
         if self.logger is not None:
             for metric_name, metric_value in stats.items():
                 self.logger.log_scalar(metric_name, metric_value, global_step)

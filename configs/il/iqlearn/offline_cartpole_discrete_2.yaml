@@ -1,0 +1,54 @@
+seed: 0
+device: cpu
+
+algo:
+  dataset: "NathanGavenski/CartPole-v1"
+  load_local_csv: False
+  num_expert_trajs: 500
+  train_ratio: 0.9
+
+    
+  obs_dim : 4
+  act_dim : 1
+  num_actions: 2
+  
+  actor_loss: "awr"
+  action_mask_noise: 0.1
+  grad_target: 1.
+  grad_penalty: 10.
+  l2_penalty: 0.
+  td_penalty: 0.5
+
+  
+  bc_penalty: 0.01 
+
+  temperature: 0.1
+
+  hidden_dims: [256, 256, 256]
+  activation: "silu"
+  gamma: 0.99
+  polyak: 0.995
+  dropout: 0.0
+  
+  alpha: 0.1
+  tune_alpha: false
+  batch_size: 256
+  policy_train_steps: 1
+  lr_actor: 3.e-4
+  lr_critic: 3.e-4
+  grad_clip: 1000.
+
+  epochs: 100
+  steps_per_epoch: 1000
+  num_eval_eps: 0
+
+  save_path: ./exp/offline_cartpole_discrete_2
+  save_steps: 50
+
+logger:
+  backend: wandb
+  log_dir: ./log
+  project_name: offline_iqlearn_cartpole_discrete
+  group_name: null
+  exp_name: cartpole_discrete_offline_2
+  wandb_mode: online

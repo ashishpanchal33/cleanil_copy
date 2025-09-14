@@ -1,0 +1,52 @@
+seed: 0
+device: cuda
+
+algo:
+  dataset: "experimenting with choice data/final/aguirregabiria_mira.pkl"
+  load_local_csv: True
+  id_ : 'id'
+  num_expert_trajs: 104
+  train_ratio: 0.9
+
+    
+  obs_dim : 6
+  act_dim : 1
+  num_actions: 2
+  
+
+  
+  
+  actor_loss: "awr"
+  action_mask_noise: 0.1
+  grad_target: 1.
+  grad_penalty: 10.
+  l2_penalty: 0.
+  td_penalty: 0.5
+
+  hidden_dims: [2,]
+  activation: "silu"
+  gamma: 0.99
+  polyak: 0.995
+  alpha: 0.1
+  dropout: 0.0
+  tune_alpha: false
+  batch_size: 256
+  policy_train_steps: 1
+  lr_actor: 3.e-4
+  lr_critic: 3.e-4
+  grad_clip: 1000.
+
+  epochs: 500
+  steps_per_epoch: 1000
+  num_eval_eps: 0
+
+  save_path: ./exp/offline_rust_discrete_v4
+  save_steps: 10
+
+logger:
+  backend: wandb
+  log_dir: ./log
+  project_name: offline_iqlearn_rust_discrete
+  group_name: null
+  exp_name: rust_discrete_offline_v4
+  wandb_mode: online
