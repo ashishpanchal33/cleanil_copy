@@ -39,11 +39,11 @@ class PositionalEncoding(nn.Module):
 
 class TransformerQNetwork(nn.Module):
     def __init__(self, obs_dim: int, num_actions: int, hidden_dims: list, activation: str,
-                 sequence_length: int, nhead: int = 4, num_layers: int = 2, dropout: float = 0.1):
+                 sequence_length: int, nhead: int = 4, num_layers: int = 2, dropout: float = 0.1,d_model: int= 128):
         super().__init__()
         self.sequence_length = sequence_length
         self.true_obs_dim = obs_dim // sequence_length
-        d_model = 128 # The internal dimension of the transformer, must be divisible by nhead
+        # The internal dimension of the transformer, must be divisible by nhead
 
         # 1. An initial linear layer to project the observation into the transformer's dimension
         self.input_proj = nn.Linear(self.true_obs_dim, d_model)
@@ -89,7 +89,7 @@ class TransformerQNetwork(nn.Module):
 
 class HistoryDoubleQNetwork_transformer(nn.Module):
     def __init__(self, obs_dim: int, num_actions: int, hidden_dims: list, activation: str,
-                 sequence_length: int, nhead: int, num_layers: int, dropout: float = 0.1):
+                 sequence_length: int, nhead: int, num_layers: int, dropout: float = 0.1,d_model: int= 128):
         """
         This wrapper now creates two independent TransformerQNetwork instances.
         """
@@ -104,7 +104,8 @@ class HistoryDoubleQNetwork_transformer(nn.Module):
             sequence_length=sequence_length,
             nhead=nhead,
             num_layers=num_layers,
-            dropout=dropout
+            dropout=dropout,
+            d_model=d_model
         )
         
         # Instantiate the second, separate Q-network (q2)
@@ -116,7 +117,8 @@ class HistoryDoubleQNetwork_transformer(nn.Module):
             sequence_length=sequence_length,
             nhead=nhead,
             num_layers=num_layers,
-            dropout=dropout
+            dropout=dropout,
+            d_model=d_model
         )
         
     def forward(self, obs, act=None):

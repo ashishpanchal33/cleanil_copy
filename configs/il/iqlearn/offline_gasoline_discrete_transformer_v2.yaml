@@ -1,25 +1,24 @@
 seed: 0
-device: cuda
-
+device: cpu
+#offline_gasoline_discrete_v1
 algo:
-  dataset: "experimenting with choice data/final/aguirregabiria_mira.pkl"
+  dataset: "experimenting with choice data/gasoline_data_price/2dfc81ca-f872-4527-be2e-fc127cbbd123.pkl"
   load_local_csv: True
   id_ : 'id'
-  num_expert_trajs: 104
+  num_expert_trajs: 98
   train_ratio: 0.9
 
-    
-  obs_dim : 6
+  obs_dim : 10
   act_dim : 1
-  num_actions: 2
-  d_model : 64
+  num_actions: 3
+  
 
   sequential: True
-  SEQUENCE_LENGTH: 4
+  SEQUENCE_LENGTH: 8
   model: 'transformer'
-  nhead: 2
-  num_layers: 2 
-
+  nhead: 4
+  num_layers: 4 
+  d_model: 128
   
   actor_loss: "awr"
   action_mask_noise: 0.1
@@ -28,7 +27,7 @@ algo:
   l2_penalty: 0.
   td_penalty: 0.5
   
-  bc_penalty: 0.01 
+  bc_penalty: 0.1 
   temperature: 0.1
 
   hidden_dims: [128,64]
@@ -36,25 +35,25 @@ algo:
   gamma: 0.99
   polyak: 0.995
   alpha: 0.1
-  dropout: 0.1
+  dropout: 0.15
   tune_alpha: false
-  batch_size: 256
+  batch_size: 128
   policy_train_steps: 1
-  lr_actor: 3.e-4
-  lr_critic: 5.e-4
+  lr_actor: 1.e-4
+  lr_critic: 1.e-4
   grad_clip: 1000.
 
   epochs: 1000
   steps_per_epoch: 1000
   num_eval_eps: 0
 
-  save_path: ./exp/offline_rust_discrete_transformer_v1
+  save_path: ./exp/offline_gasoline_discrete_transformer_v3
   save_steps: 50
 
 logger:
   backend: wandb
   log_dir: ./log
-  project_name: offline_iqlearn_rust_discrete_lstm
+  project_name: offline_iqlearn_gasoline_discrete_lstm
   group_name: null
-  exp_name: rust_discrete_offline_transformer_v1
+  exp_name: gasoline_discrete_offline_transformer_v3
   wandb_mode: online

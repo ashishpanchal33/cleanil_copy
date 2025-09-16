@@ -5,7 +5,7 @@ algo:
   dataset: "experimenting with choice data/gasoline_data_price/2dfc81ca-f872-4527-be2e-fc127cbbd123.pkl"
   load_local_csv: True
   id_ : 'id'
-  num_expert_trajs: 104
+  num_expert_trajs: 98
   train_ratio: 0.9
 
   obs_dim : 10

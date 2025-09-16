@@ -16,9 +16,8 @@ from cleanil.rl.critic_discrete import DoubleQNetwork, compute_q_target, update_
 #from cleanil.rl.actor import TanhNormalActor, sample_actor, compute_action_likelihood
 
 
-
-
-
+# After creating your optimizers
+from torch.optim.lr_scheduler import LinearLR, CosineAnnealingLR, SequentialLR
 
 import torch
 import torch.nn as nn
@@ -66,8 +65,11 @@ class IQLearnConfig(BaseTrainerConfig):
     sequential:bool= True
     SEQUENCE_LENGTH:int = 2
     model: str ='lstm'
+
+    #transformer params
     nhead: int = 4
     num_layers: int = 2 
+    d_model: int = 32
 
     
     obs_dim : int = 4
@@ -249,6 +251,7 @@ def update_critic_discrete(
     grad_clip: float | None = None,
     bc_penalty: float = 0.5, #new
     temperature: float = 0.1, 
+    scheduler: torch.optim.lr_scheduler.LRScheduler | None = None,
 ):
     optimizer.zero_grad()
     loss, stats = compute_critic_loss_discrete(
@@ -273,6 +276,10 @@ def update_critic_discrete(
     if grad_clip is not None:
         nn.utils.clip_grad_norm_(critic.parameters(), grad_clip)
     optimizer.step()
+
+    if scheduler is not None:
+        scheduler.step()
+    
     return stats
 
 
@@ -291,13 +298,64 @@ class DiscreteOfflineTrainer(BaseTrainer):
         self.device = device
         self.critic = critic
         self.critic_target = copy.deepcopy(self.critic)
+    
         self.alpha = torch.tensor(config.alpha, device=device)
+        max_lr = config.lr_critic
         
         freeze_model_parameters(self.critic_target)
+
+        # Total training steps = epochs * steps_per_epoch
+        total_steps = self.config.epochs * self.config.steps_per_epoch
         
         self.optimizers = {
-            "critic": torch.optim.Adam(self.critic.parameters(), lr=config.lr_critic),
+            "critic": torch.optim.Adam(self.critic.parameters(), lr=max_lr, capturable=True, fused = True),
         }
+
+
+
+        #setting up scheduler
+
+        num_warmup_steps = int(0.1 * total_steps) # 10% of total steps for warmup
+        
+        # --- 3. Create the Schedulers ---
+        
+        # WARMUP SCHEDULER
+        # This lambda function will scale the LR from 0 to 1 over num_warmup_steps
+
+        warmup_scheduler = LinearLR(
+                                        self.optimizers['critic'],
+                                        start_factor=1e-8, # Start the LR at a very small value
+                                        end_factor=1.0,
+                                        total_iters=num_warmup_steps
+                                    )
+
+
+
+
+
+        
+        # COSINE DECAY SCHEDULER
+        # T_max is the number of steps for the decay phase
+        num_decay_steps = total_steps - num_warmup_steps
+        cosine_scheduler = CosineAnnealingLR(self.optimizers['critic'], T_max=num_decay_steps) # eta_min=0 means LR decays to 0
+        
+        # --- 4. Chain them with SequentialLR ---
+        # This is an important step part.
+        # It runs scheduler1 for `milestones` steps, then switches to scheduler2.
+        # Note: Since the LR is already at its peak after warmup, the optimizer's LR for the
+        # cosine scheduler should be set to the max_lr. SequentialLR handles this transition.
+        # We set the optimizer's initial LR to max_lr *before* creating the final scheduler.
+
+        self.optimizers['critic'].param_groups[0]['lr'] = max_lr
+        
+        
+        self.scheduler = {
+                                "critic": SequentialLR(
+                                                self.optimizers['critic'],
+                                                schedulers=[warmup_scheduler, cosine_scheduler],
+                                                milestones=[num_warmup_steps]
+                                            ),
+                        }
         
         # Store modules for checkpointing
         self._modules["critic"] = self.critic
@@ -312,7 +370,8 @@ class DiscreteOfflineTrainer(BaseTrainer):
             self.config.grad_target, self.config.grad_penalty, 
             self.config.l2_penalty, self.optimizers["critic"], 
             self.config.grad_clip,  self.config.bc_penalty,#: float, #new
-                                    self.config.temperature#: float, 
+                                    self.config.temperature,#: float, 
+            scheduler = self.scheduler['critic']
         )
         
         # Update target network
@@ -322,6 +381,7 @@ class DiscreteOfflineTrainer(BaseTrainer):
         if self.logger is not None:
             for metric_name, metric_value in critic_stats.items():
                 self.logger.log_scalar(f"critic/{metric_name}", metric_value, global_step)
+                self.logger.log_scalar(f"critic/Learning_rate", self.scheduler["critic"].get_last_lr()[0], global_step)
         
         return critic_stats
     

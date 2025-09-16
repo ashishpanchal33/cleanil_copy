@@ -265,7 +265,10 @@ def main():
             activation=algo_config.activation,
             sequence_length=SEQUENCE_LENGTH,
             nhead=algo_config.nhead,  # Example hyperparameter for the transformer
-            num_layers=algo_config.num_layers # Example hyperparameter for the transformer
+            num_layers=algo_config.num_layers, # Example hyperparameter for the transformer
+
+            dropout = algo_config.dropout,
+            d_model = algo_config.d_model
         )
 
 
